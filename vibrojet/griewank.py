@@ -82,7 +82,12 @@ def deriv(
     @jax.jit
     def _sum(carry, i):
         _, (*_, res) = jet.jet(
-            func, (x0,), ((jnp.asarray(k)[i],) + (jnp.zeros_like(x0),) * (sum_i - 1),)
+            func,
+            (x0,),
+            (
+                (jnp.asarray(k, dtype=jnp.float64)[i],)
+                + (jnp.zeros_like(x0),) * (sum_i - 1),
+            ),
         )
         return carry + res * c[i], 0
 
@@ -141,7 +146,10 @@ def deriv_list(
             _, (*_, res) = jet.jet(
                 func,
                 (x0,),
-                ((jnp.asarray(j)[i],) + (jnp.zeros_like(x0),) * (d - 1),),
+                (
+                    (jnp.asarray(j, dtype=jnp.float64)[i],)
+                    + (jnp.zeros_like(x0),) * (d - 1),
+                ),
             )
             return 0, res
 
