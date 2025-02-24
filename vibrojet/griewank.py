@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental import jet
-from scipy.special import comb, binom
+from scipy.special import comb, binom, factorial
 
 jax.config.update("jax_enable_x64", True)
 
@@ -47,7 +47,10 @@ def _coefs_ij(i: List[int], j: List[int], d: int):
 
 
 def deriv(
-    func: Callable[[jnp.ndarray], float], deriv_ind: List[int], x0: jnp.ndarray
+    func: Callable[[jnp.ndarray], float],
+    deriv_ind: List[int],
+    x0: jnp.ndarray,
+    if_taylor: bool = False,
 ) -> float:
     """Computes partial derivative of a function `func` at a point `x0`
     given by the derivative multi-index `deriv_ind`.
@@ -64,10 +67,15 @@ def deriv(
         deriv_ind (List[int]): A multi-index specifying the order of differentiation along
             each coordinate.
         x0 (jnp.ndarray): The point at which the partial derivative is computed.
+        if_taylor (bool): If True, returns Taylor expansion coefficients.
 
     Returns:
-        float: The computed partial derivative value of `func` at `x0`.
+        float: The computed partial derivative value (of Taylor expansion coefficient)
+            of `func` at `x0`.
     """
+    if np.all(np.array(deriv_ind) == 0):
+        return func(x0)
+
     k, c = _coefs_i(deriv_ind)
     sum_i = sum(deriv_ind)
 
@@ -79,6 +87,9 @@ def deriv(
         return carry + res * c[i], 0
 
     res, _ = jax.lax.scan(_sum, 0, jnp.arange(len(k)))
+    res = res / factorial(sum_i)
+    if if_taylor:
+        res = res / jnp.prod(factorial(deriv_ind))
     return res
 
 
@@ -86,6 +97,7 @@ def deriv_list(
     func: Callable[[jnp.ndarray], float],
     deriv_ind_list: List[List[int]],
     x0: jnp.ndarray,
+    if_taylor: bool = False,
 ) -> jnp.ndarray:
     """Computes partial derivatives of a function `func` at a point `x0`
     given by the list of derivative multi-indices `deriv_ind_list`.
@@ -102,13 +114,13 @@ def deriv_list(
         deriv_ind_list (List[List[int]]): A list of multi-indices specifying the order
             of differentiation along each coordinate.
         x0 (jnp.ndarray): The point at which the partial derivative is computed.
+        if_taylor (bool): If True, returns Taylor expansion coefficients.
 
     Returns:
-        array(float): Array of computed partial derivative values of `func` at `x0`.
+        array(float): Array of computed partial derivative values (of Taylor expansion coefficients)
+            of `func` at `x0`.
     """
-    d = np.max(np.sum(deriv_ind_list, axis=-1))
     ncoo = len(x0)
-
     deg_list = np.sort(np.unique(np.sum(deriv_ind_list, axis=-1)))
 
     f_d = {}
@@ -139,9 +151,15 @@ def deriv_list(
     coefs = []
 
     for i in deriv_ind_list:
-        d = sum(i)
-        j = j_d[d]
-        c = np.array([_coefs_ij(i, j_, d) for j_ in j])
-        coefs.append(jnp.sum(c * f_d[d]))
+        if np.all(np.array(i) == 0):
+            c = func(x0)
+        else:
+            d = sum(i)
+            j = j_d[d]
+            c = np.array([_coefs_ij(i, j_, d) for j_ in j])
+            c = jnp.sum(c * f_d[d]) / factorial(d)
+            if if_taylor:
+                c = c / jnp.prod(factorial(i))
+        coefs.append(c)
 
     return jnp.array(coefs)
