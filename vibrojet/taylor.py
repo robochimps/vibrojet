@@ -91,7 +91,8 @@ def deriv(
         )
         return carry + res * c[i], 0
 
-    res, _ = jax.lax.scan(_sum, 0, jnp.arange(len(k)))
+    res, _ = _sum(0, 0)
+    res, _ = jax.lax.scan(_sum, res, jnp.arange(1, len(k)))
     res = res / factorial(sum_i)
     if if_taylor:
         res = res / jnp.prod(factorial(deriv_ind))
@@ -165,9 +166,63 @@ def deriv_list(
             d = sum(i)
             j = j_d[d]
             c = np.array([_coefs_ij(i, j_, d) for j_ in j])
-            c = jnp.sum(c * f_d[d]) / factorial(d)
+            c = jnp.einsum("i,i...->...", c, f_d[d]) / factorial(d)
             if if_taylor:
                 c = c / jnp.prod(factorial(i))
         coefs.append(c)
 
     return jnp.array(coefs)
+
+
+def inv_taylor(pow_ind: np.ndarray, coefs: np.ndarray) -> np.ndarray:
+    """Given a Taylor series expansion of a matrix or tensor, specified by multi-indices `pow_ind` 
+    and corresponding coefficients `coefs`, computes the Taylor series expansion of its inverse.
+
+    Args:
+        pow_ind (np.ndarray): A 2D array of shape `(num_terms, num_coords)` containing integer 
+            exponents for each coordinate in the Taylor series expansion. Here, `num_terms` is 
+            the number of expansion terms, and `num_coords` is the number of coordinates.
+        coefs (np.ndarray): A multi-dimensional array of shape `(num_terms, ...)` containing the 
+            Taylor series coefficients in the same order as `pow_ind`. The trailing dimensions 
+            represent the matrix or tensor whose inverse is to be computed.
+
+    Returns:
+        np.ndarray: An array of the same shape as `coefs`, containing the Taylor series expansion 
+            coefficients of the inverse of the input matrix or tensor.
+    """
+
+    assert len(np.unique(pow_ind, axis=-1)) == len(
+        pow_ind
+    ), f"Argument 'pow_ind' contains duplicate multi-indices"
+
+    ind0 = np.where(jnp.all(pow_ind == 0, axis=-1))[0][0]
+    inv = np.linalg.inv(coefs[ind0])
+    inv_coefs = {tuple(pow_ind[ind0]): inv}
+
+    sort_ind = np.argsort(np.sum(pow_ind, axis=-1))
+    pow_ind_sorted = pow_ind[sort_ind]
+    coefs_sorted = coefs[sort_ind]
+
+    for i in pow_ind_sorted:
+        if np.sum(i, axis=-1) == 0:
+            continue
+        ind = jnp.where(
+            (np.any(pow_ind_sorted > 0, axis=-1))
+            & (np.all(i[None, :] - pow_ind_sorted >= 0, axis=-1))
+        )
+        j = pow_ind_sorted[ind]
+        c = coefs_sorted[ind]
+        ci = np.array(
+            [
+                inv_coefs.get(tuple(elem), jnp.zeros_like(inv))
+                # inv_coefs[tuple(elem)]
+                for elem in i[None, :] - j
+            ]
+        )
+        inv_coefs[tuple(i)] = -np.einsum(
+            "ac,tci,tib->ab", inv, c, ci, optimize="optimal"
+        )
+
+    return np.array(
+        [inv_coefs.get(tuple(elem), np.zeros_like(inv)) for elem in pow_ind]
+    )
