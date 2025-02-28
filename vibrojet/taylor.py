@@ -1,13 +1,3 @@
-"""This module implements a partial derivative computation method based on univariate 
-Taylor series expansion, as described in the work of Andreas Griewank, Jean Utke, 
-and Andrea Walther.
-
-Rerefence:
-Andreas Griewank, Jean Utke and Andrea Walther,
-"Evaluating higher derivative tensors by forward propagation of univariate Taylor series",
-Math. Comp. 69 (2000), 1117-1130, https://doi.org/10.1090/S0025-5718-00-01120-0
-"""
-
 import itertools
 from typing import Callable, List
 
@@ -15,13 +5,19 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental import jet
-from scipy.special import comb, binom, factorial
+from scipy.special import binom, comb, factorial
 
 jax.config.update("jax_enable_x64", True)
 
 
 def _coefs_i(i: List[int]):
-    """Coefficients from Eq. (13) of Griewank's paper"""
+    """Coefficients from Eq. (13) of Griewank's paper
+
+    Rerefence:
+        - Andreas Griewank, Jean Utke and Andrea Walther,
+        "Evaluating higher derivative tensors by forward propagation of univariate Taylor series",
+        Math. Comp. 69 (2000), 1117-1130, https://doi.org/10.1090/S0025-5718-00-01120-0
+    """
     k_ind = [elem for elem in itertools.product(*[range(0, k + 1) for k in i])]
     sum_i_min_k = (-1) ** np.sum(np.array(i)[None, :] - np.array(k_ind), axis=-1)
     c = jnp.array([np.prod(comb(i, k)) for k in k_ind]) * sum_i_min_k
@@ -29,7 +25,13 @@ def _coefs_i(i: List[int]):
 
 
 def _coefs_ij(i: List[int], j: List[int], d: int):
-    """Coefficients c_{i,j} from Eq. (17) of Griewank's paper"""
+    """Coefficients c_{i,j} from Eq. (17) of Griewank's paper
+
+    Rerefence:
+        - Andreas Griewank, Jean Utke and Andrea Walther,
+        "Evaluating higher derivative tensors by forward propagation of univariate Taylor series",
+        Math. Comp. 69 (2000), 1117-1130, https://doi.org/10.1090/S0025-5718-00-01120-0
+    """
     sum_i = sum(i)
     k_ind = [elem for elem in itertools.product(*[range(0, k + 1) for k in i])]
     fac1 = (-1) ** np.sum(np.array(i)[None, :] - np.array(k_ind), axis=-1)
@@ -91,6 +93,7 @@ def deriv(
         )
         return carry + res * c[i], 0
 
+    # ... need to replace scan with simple sum, works faster
     res, _ = _sum(0, 0)
     res, _ = jax.lax.scan(_sum, res, jnp.arange(1, len(k)))
     res = res / factorial(sum_i)
@@ -143,7 +146,7 @@ def deriv_list(
         j_d[d] = j
 
         @jax.jit
-        def _sum(carry, i):
+        def _jet(carry, i):
             _, (*_, res) = jet.jet(
                 func,
                 (x0,),
@@ -154,8 +157,13 @@ def deriv_list(
             )
             return 0, res
 
-        _, res = jax.lax.scan(_sum, 0, jnp.arange(len(j)))
-        f_d[d] = res
+        # _, f_d[d] = jax.lax.scan(_jet, 0, jnp.arange(len(j))) #  ... slow
+
+        f_d[d] = jnp.array([_jet(0, i)[1] for i in jnp.arange(len(j))])
+
+        # f_d[d] = jax.vmap(lambda a, b: _jet(a, b)[1], in_axes=(None, 0))(
+        #     0, jnp.arange(len(j))
+        # )
 
     coefs = []
 
@@ -165,7 +173,7 @@ def deriv_list(
         else:
             d = sum(i)
             j = j_d[d]
-            c = np.array([_coefs_ij(i, j_, d) for j_ in j])
+            c = jnp.array([_coefs_ij(i, j_, d) for j_ in j])
             c = jnp.einsum("i,i...->...", c, f_d[d]) / factorial(d)
             if if_taylor:
                 c = c / jnp.prod(factorial(i))
@@ -175,19 +183,19 @@ def deriv_list(
 
 
 def inv_taylor(pow_ind: np.ndarray, coefs: np.ndarray) -> np.ndarray:
-    """Given a Taylor series expansion of a matrix or tensor, specified by multi-indices `pow_ind` 
+    """Given a Taylor series expansion of a matrix or tensor, specified by multi-indices `pow_ind`
     and corresponding coefficients `coefs`, computes the Taylor series expansion of its inverse.
 
     Args:
-        pow_ind (np.ndarray): A 2D array of shape `(num_terms, num_coords)` containing integer 
-            exponents for each coordinate in the Taylor series expansion. Here, `num_terms` is 
+        pow_ind (np.ndarray): A 2D array of shape `(num_terms, num_coords)` containing integer
+            exponents for each coordinate in the Taylor series expansion. Here, `num_terms` is
             the number of expansion terms, and `num_coords` is the number of coordinates.
-        coefs (np.ndarray): A multi-dimensional array of shape `(num_terms, ...)` containing the 
-            Taylor series coefficients in the same order as `pow_ind`. The trailing dimensions 
+        coefs (np.ndarray): A multi-dimensional array of shape `(num_terms, ...)` containing the
+            Taylor series coefficients in the same order as `pow_ind`. The trailing dimensions
             represent the matrix or tensor whose inverse is to be computed.
 
     Returns:
-        np.ndarray: An array of the same shape as `coefs`, containing the Taylor series expansion 
+        np.ndarray: An array of the same shape as `coefs`, containing the Taylor series expansion
             coefficients of the inverse of the input matrix or tensor.
     """
 
