@@ -1,2 +1,3 @@
 # vibrojet
-Rovibrational KEOs made easy: pointwise and Taylor series expansion representation of rovibrational kinetic energy operators using JAX jet
+
+Python package for constructing molecular rovibrational kinetic energy operators using Taylor-mode automatic differentiation.
