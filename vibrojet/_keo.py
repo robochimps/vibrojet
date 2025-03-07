@@ -44,14 +44,19 @@ def eckart(q_ref, masses):
         @functools.wraps(internal_to_cartesian)
         def wrapper_eckart(*args, **kwargs):
             global c_mat
+            masses_ = jnp.asarray(masses)
             xyz = internal_to_cartesian(*args, **kwargs)
+            com = masses_ @ xyz / jnp.sum(masses_)
+            xyz -= com
             xyz_ref = internal_to_cartesian(q_ref, **kwargs)
+            com_ref = masses_ @ xyz_ref / jnp.sum(masses_)
+            xyz_ref -= com_ref
             xyz_ma = xyz_ref - xyz
             xyz_pa = xyz_ref + xyz
             x_ma, y_ma, z_ma = xyz_ma.T
             x_pa, y_pa, z_pa = xyz_pa.T
 
-            masses_ = jnp.asarray(masses)
+            
             c11 = jnp.sum(masses_ * (x_ma**2 + y_ma**2 + z_ma**2))
             c12 = jnp.sum(masses_ * (y_pa * z_ma - y_ma * z_pa))
             c13 = jnp.sum(masses_ * (x_ma * z_pa - x_pa * z_ma))
