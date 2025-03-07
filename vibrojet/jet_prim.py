@@ -13,6 +13,13 @@ def fact(n):
     return lax.exp(lax.lgamma(n + 1.0))
 
 
+# Define JAX.jet rules for missing primitive functions
+
+
+##################
+# matrix inversion
+##################
+
 inv_p = Primitive("_inv")
 
 
@@ -61,6 +68,7 @@ def inv_lowering(ctx, a, **kw):
 
 mlir.register_lowering(inv_p, inv_lowering)
 
+
 def inv_batch_rule(args, dims):
     (mat,) = args
     (dim,) = dims
@@ -101,6 +109,9 @@ def _inverse_taylor_rule(primals_in, series_in, **kw):
 
 jet.jet_rules[inv_p] = _inverse_taylor_rule
 
+#################################
+# matrix eigenvalue decomposition
+#################################
 
 eigh_p = Primitive("_eigh")
 
@@ -199,3 +210,7 @@ def _eigh_taylor_rule(primals_in, series_in, **params):
 
 
 jet.jet_rules[eigh_p] = _eigh_taylor_rule
+
+######
+# Acos
+######
