@@ -1,5 +1,7 @@
 """Standard implementation of KEO that can be differentiated using jax.jacfwd and jax.jacrev"""
+
 import functools
+from typing import Callable
 
 import jax
 import jax.numpy as jnp
@@ -56,7 +58,6 @@ def eckart(q_ref, masses):
             x_ma, y_ma, z_ma = xyz_ma.T
             x_pa, y_pa, z_pa = xyz_pa.T
 
-            
             c11 = jnp.sum(masses_ * (x_ma**2 + y_ma**2 + z_ma**2))
             c12 = jnp.sum(masses_ * (y_pa * z_ma - y_ma * z_pa))
             c13 = jnp.sum(masses_ * (x_ma * z_pa - x_pa * z_ma))
@@ -136,3 +137,46 @@ def _Gmat_s(q, masses, internal_to_cartesian, cartesian_to_internal):
 
 
 batch_Gmat_s = jax.jit(jax.vmap(_Gmat_s, in_axes=(0, None, None, None)))
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def dGmat(q, masses, internal_to_cartesian):
+    return jax.jacfwd(Gmat)(q, masses, internal_to_cartesian)
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def Detgmat(q, masses, internal_to_cartesian):
+    nq = len(q)
+    return jnp.linalg.det(gmat(q, masses, internal_to_cartesian)[: nq + 3, : nq + 3])
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def dDetgmat(q, masses, internal_to_cartesian):
+    return jax.grad(Detgmat)(q, masses, internal_to_cartesian)
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def hDetgmat(q, masses, internal_to_cartesian):
+    return jax.jacfwd(jax.jacrev(Detgmat))(q, masses, internal_to_cartesian)
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def pseudo(
+    q: np.ndarray,
+    masses: np.ndarray,
+    internal_to_cartesian: Callable[[jnp.ndarray], jnp.ndarray],
+):
+    nq = len(q)
+    G = Gmat(q, masses, internal_to_cartesian)[:nq, :nq]
+    dG = dGmat(q, masses, internal_to_cartesian)[:nq, :nq, :]
+    dG = jnp.transpose(dG, (0, 2, 1))
+    det = Detgmat(q, masses, internal_to_cartesian)
+    det2 = det * det
+    ddet = dDetgmat(q, masses, internal_to_cartesian)
+    hdet = hDetgmat(q, masses, internal_to_cartesian)
+    pseudo1 = (jnp.dot(ddet, jnp.dot(G, ddet))) / det2
+    pseudo2 = (jnp.sum(dG * ddet.T) + jnp.sum(G * hdet)) / det
+    return (-3 * pseudo1 + 4 * pseudo2) / 32.0
+
+
+batch_pseudo = jax.jit(jax.vmap(pseudo, in_axes=(0, None, None)), static_argnums=2)
