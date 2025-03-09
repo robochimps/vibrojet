@@ -1,12 +1,14 @@
 import functools
 from typing import Callable, List, Tuple
+from functools import reduce
+import operator
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from scipy import constants
 
-from .jet_prim import eigh, inv
+from .jet_prim import eigh, inv, lu
 
 jax.config.update("jax_enable_x64", True)
 
@@ -376,21 +378,28 @@ def dGmat(q, masses, internal_to_cartesian):
 batch_dGmat = jax.jit(jax.vmap(dGmat, in_axes=0))
 
 
+@jax.jit
+def det(a):
+    l, u = lu(a)
+    ud = [u[i, i] for i in range(len(u))]
+    return reduce(operator.mul, ud, 1)
+
+
 @functools.partial(jax.jit, static_argnums=(2,))
 def Detgmat(q, masses, internal_to_cartesian):
     nq = len(q)
-    return jnp.linalg.det(gmat(q,masses, internal_to_cartesian)[: nq + 3, : nq + 3])
+    return det(gmat(q, masses, internal_to_cartesian)[: nq + 3, : nq + 3])
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
 def dDetgmat(q, masses, internal_to_cartesian):
-    return jax.grad(Detgmat)(q, masses, internal_to_cartesian)
+    return jax.jacfwd(Detgmat)(q, masses, internal_to_cartesian)
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
 def hDetgmat(q, masses, internal_to_cartesian):
-    # return jax.jacfwd(jax.jacrev(Detgmat))(q, masses, internal_to_cartesian)
-    return jax.jacfwd(jax.jacfwd(Detgmat))(q, masses, internal_to_cartesian)
+    return jax.jacfwd(dDetgmat)(q, masses, internal_to_cartesian)
+
 
 @functools.partial(jax.jit, static_argnums=(2,))
 def pseudo(
@@ -407,7 +416,8 @@ def pseudo(
     ddet = dDetgmat(q, masses, internal_to_cartesian)
     hdet = hDetgmat(q, masses, internal_to_cartesian)
     pseudo1 = (jnp.dot(ddet, jnp.dot(G, ddet))) / det2
-    pseudo2 = (jnp.sum(jnp.diag(jnp.dot(dG, ddet))) + jnp.sum(G * hdet)) / det
+    pseudo2 = (jnp.sum(dG * ddet.T) + jnp.sum(G * hdet)) / det
     return (-3 * pseudo1 + 4 * pseudo2) / 32.0
+
 
 batch_pseudo = jax.jit(jax.vmap(pseudo, in_axes=(0, None, None)), static_argnums=2)
