@@ -91,7 +91,6 @@ def _inverse_taylor_rule(primals_in, series_in, **kw):
     if "taylor_coef0" in kw:
         v[0] = kw["taylor_coef0"]
     else:
-        # v[0] = jnp.linalg.inv(x)
         v[0] = inv(x)
 
     def scale(k, j):
@@ -126,8 +125,8 @@ def eigh_impl(a, **kw):
     return e, v
 
 
-eigh_p.def_impl(eigh_impl)
 eigh_p.multiple_results = True
+eigh_p.def_impl(eigh_impl)
 
 
 @jax.jit
@@ -137,7 +136,7 @@ def eigh_jvp(primals, tangents, **kw):
     e, v = eigh(a)
     de = jnp.array([v[:, i].T @ da @ v[:, i] for i in range(len(v))])
     inv_de = jnp.pow(e[:, None] - e[None, :] + jnp.eye(len(e)), -1) - jnp.eye(len(e))
-    dv = (v.T @ da @ v.T) * inv_de * v
+    dv = -(v.T @ da @ v) * inv_de * v
     return (e, v), (de, dv)
 
 
@@ -190,16 +189,22 @@ def _eigh_taylor_rule(primals_in, series_in, **params):
     if "taylor_coef0" in params:
         e[0], v[0] = params["taylor_coef0"]
     else:
-        # e[0], v[0] = jnp.linalg.eigh(u[0])
         e[0], v[0] = eigh(u[0])
 
     eye_ = jnp.eye(len(e[0]))
     inv_de = jnp.pow(e[0][:, None] - e[0][None, :] + eye_, -1) - eye_
     inv_de_v0 = inv_de * v[0]
 
+    def scale(k, j):
+        return 1.0 / (fact(k - j) * fact(j))
+
     for k in range(1, len(v)):
         u_k = v[0].T @ u[k] @ v[0]
-        uv_k = v[0].T @ sum(u[j] @ v[k - j] for j in range(1, k + 1))
+        uv_k = (
+            fact(k)
+            * v[0].T
+            @ sum(scale(k, j) * u[j] @ v[k - j] for j in range(1, k + 1))
+        )
         e[k] = jnp.array([u_k[i, i] + uv_k[i, i] for i in range(len(v[0]))])
         ev_k = sum((eye_ * e[j]) @ v[k - j] for j in range(1, k + 1))
         v[k] = (-u_k - uv_k + ev_k) * inv_de_v0
@@ -219,13 +224,13 @@ lu_p = Primitive("_lu")
 
 
 def lu(a, **kw):
-    p, l, u = lu_p.bind(a, **kw)
-    return p, l, u
+    l, u = lu_p.bind(a, **kw)
+    return l, u
 
 
 def lu_impl(a, **kw):
-    p, l, u = jax.scipy.linalg.lu(a)
-    return p, l, u
+    l, u = jax.scipy.linalg.lu(a, permute_l=True)
+    return l, u
 
 
 lu_p.def_impl(lu_impl)
@@ -236,14 +241,13 @@ lu_p.multiple_results = True
 def lu_jvp(primals, tangents, **kw):
     (a,) = primals
     (da,) = tangents
-    p, l, u = lu(a)
+    l, u = lu(a)
     li = inv(l)
     ui = inv(u)
-    f = li @ p @ da @ ui
+    f = li @ da @ ui
     du = jnp.triu(f) @ u
     dl = l @ jnp.tril(f, -1)
-    dp = jnp.zeros_like(dl)
-    return (p, l, u), (dp, dl, du)
+    return (l, u), (dl, du)
 
 
 ad.primitive_jvps[lu_p] = lu_jvp
@@ -255,18 +259,16 @@ def lu_abstract_eval(a):
         raise ValueError("Current implementation of 'lu' works only for square matrix")
     N = shape[0]
     dtype = a.dtype
-    return (
-        ShapedArray((N, N), dtype),
-        ShapedArray((N, N), dtype),
-        ShapedArray((N, N), dtype),
-    )
+    return (ShapedArray((N, N), dtype), ShapedArray((N, N), dtype))
 
 
 lu_p.def_abstract_eval(lu_abstract_eval)
 
 
 def lu_lowering(ctx, a, **kw):
-    return mlir.lower_fun(jax.scipy.linalg.lu, multiple_results=True)(ctx, a)
+    return mlir.lower_fun(
+        lambda a: jax.scipy.linalg.lu(a, permute_l=True), multiple_results=True
+    )(ctx, a)
 
 
 mlir.register_lowering(lu_p, lu_lowering)
@@ -277,8 +279,8 @@ def lu_batch_rule(args, dims):
     (dim,) = dims
     if dim is None:
         return lu_p(mat), None
-    p, l, u = jax.vmap(jax.scipy.linalg.lu)(mat)
-    return (p, l, u), (dim, dim, dim)
+    l, u = jax.vmap(lambda a: jax.scipy.linalg.lu(a, permute_l=True))(mat)
+    return (l, u), (dim, dim)
 
 
 batching.primitive_batchers[lu_p] = lu_batch_rule
@@ -292,24 +294,25 @@ def _lu_taylor_rule(primals_in, series_in, **params):
     l = [None] * len(a)
     u = [None] * len(a)
 
-    p, l[0], u[0] = lu(a[0])
+    l[0], u[0] = lu(a[0])
     li = inv(l[0])
     ui = inv(u[0])
 
+    def scale(k, j):
+        return 1.0 / (fact(k - j) * fact(j))
+
     for k in range(1, len(a)):
-        f = li @ (p @ a[k] - sum(l[i] @ u[k - i] for i in range(1, k))) @ ui
+        f = (
+            li
+            @ (a[k] - fact(k) * sum(scale(k, i) * l[i] @ u[k - i] for i in range(1, k)))
+            @ ui
+        )
         u[k] = jnp.triu(f) @ u[0]
         l[k] = l[0] @ jnp.tril(f, -1)
 
-    p_primal_out = p
-    p_series_out = [jnp.zeros_like(elem) for elem in a[1:]]
     l_primal_out, *l_series_out = l
     u_primal_out, *u_series_out = u
-    return (p_primal_out, l_primal_out, u_primal_out), (
-        p_series_out,
-        l_series_out,
-        u_series_out,
-    )
+    return (l_primal_out, u_primal_out), (l_series_out, u_series_out)
 
 
 jet.jet_rules[lu_p] = _lu_taylor_rule
