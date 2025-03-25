@@ -99,7 +99,7 @@ def _inverse_taylor_rule(primals_in, series_in, **kw):
     for k in range(1, len(v)):
         v[k] = (
             -fact(k)
-            * v[0]
+            * v[0]  # T?
             @ sum(scale(k, j) * u[j] @ v[k - j] for j in range(1, k + 1))
         )
     primal_out, *series_out = v
@@ -134,9 +134,11 @@ def eigh_jvp(primals, tangents, **kw):
     (a,) = primals
     (da,) = tangents
     e, v = eigh(a)
-    de = jnp.array([v[:, i].T @ da @ v[:, i] for i in range(len(v))])
-    inv_de = jnp.pow(e[:, None] - e[None, :] + jnp.eye(len(e)), -1) - jnp.eye(len(e))
-    dv = -(v.T @ da @ v) * inv_de * v
+    eye_ = jnp.eye(len(e))
+    de = jnp.array([v[:, i] @ da @ v[:, i] for i in range(len(v))])
+    inv_de = jnp.pow(e[:, None] - e[None, :] + eye_, -1) - eye_
+    c = (v.T @ da @ v) * inv_de
+    dv = v @ c.T
     return (e, v), (de, dv)
 
 
@@ -182,32 +184,48 @@ batching.primitive_batchers[eigh_p] = eigh_batch_rule
 def _eigh_taylor_rule(primals_in, series_in, **params):
     (x,) = primals_in
     (x_terms,) = series_in
-    u = [x] + x_terms
-    e = [None] * len(u)
-    v = [None] * len(u)
-
-    if "taylor_coef0" in params:
-        e[0], v[0] = params["taylor_coef0"]
-    else:
-        e[0], v[0] = eigh(u[0])
-
-    eye_ = jnp.eye(len(e[0]))
-    inv_de = jnp.pow(e[0][:, None] - e[0][None, :] + eye_, -1) - eye_
-    inv_de_v0 = inv_de * v[0]
+    a = [x] + x_terms
+    e = [None] * len(a)
+    v = [None] * len(a)
 
     def scale(k, j):
         return 1.0 / (fact(k - j) * fact(j))
 
-    for k in range(1, len(v)):
-        u_k = v[0].T @ u[k] @ v[0]
-        uv_k = (
-            fact(k)
-            * v[0].T
-            @ sum(scale(k, j) * u[j] @ v[k - j] for j in range(1, k + 1))
-        )
-        e[k] = jnp.array([u_k[i, i] + uv_k[i, i] for i in range(len(v[0]))])
-        ev_k = sum((eye_ * e[j]) @ v[k - j] for j in range(1, k + 1))
-        v[k] = (-u_k - uv_k + ev_k) * inv_de_v0
+    e[0], v[0] = eigh(a[0])
+
+    nprim, nvec = v[0].shape
+    eye_ = jnp.eye(nprim)
+
+    mi = [None] * nvec
+    for i in range(nvec):
+        m1 = jnp.concatenate((jnp.array([[0]]), v[0][:, i : i + 1].T), axis=-1)
+        m2 = jnp.concatenate((v[0][:, i : i + 1], eye_ * e[0][i] - a[0]), axis=-1)
+        m = jnp.concatenate((m1, m2), axis=0)
+        mi[i] = inv(m)
+
+    for k in range(1, len(a)):
+        if k == 1:
+            b1 = jnp.zeros((nvec, nvec), dtype=jnp.float64)
+            b2 = a[k] @ v[0]
+        else:
+            b1 = (
+                -0.5
+                * fact(k)
+                * sum(scale(k, m) * v[k - m].T @ v[m] for m in range(1, k))
+            )
+            b2 = fact(k) * (
+                sum(scale(k, m) * a[k - m] @ v[m] for m in range(k))
+                - sum(scale(k, m) * v[k - m] @ (eye_ * e[m]) for m in range(1, k))
+            )
+
+        e_, *v_ = jnp.array(
+            [
+                mi[i] @ jnp.concatenate((b1[i : i + 1, i], b2[:, i]), axis=0)
+                for i in range(nvec)
+            ]
+        ).T
+        e[k] = jnp.array(e_)
+        v[k] = jnp.array(v_)
 
     e_primal_out, *e_series_out = e
     v_primal_out, *v_series_out = v
@@ -215,6 +233,75 @@ def _eigh_taylor_rule(primals_in, series_in, **params):
 
 
 jet.jet_rules[eigh_p] = _eigh_taylor_rule
+
+
+@jax.jit
+def _eigh_taylor_rule2(primals_in, series_in, **params):
+    (x,) = primals_in
+    (x_terms,) = series_in
+    u = [x] + x_terms
+    e = [None] * len(u)
+    v = [None] * len(u)
+    e_m = [None] * len(u)
+
+    e[0], v[0] = eigh(u[0])
+
+    n = len(e[0])
+    eye_ = jnp.eye(n)
+    inv_de = jnp.pow(e[0][:, None] - e[0][None, :] + eye_, -1) - eye_
+
+    e_m[0] = eye_ * e[0]
+
+    def scale_(k, j):
+        return 1.0 / (fact(k - j) * fact(j - 1))
+
+    def scale(k, j):
+        return 1.0 / (fact(k - j) * fact(j))
+
+    for k in range(1, len(v)):
+
+        res = fact(k) * sum(
+            scale(k, m) * v[0].T @ u[m] @ v[k - m] for m in range(1, k + 1)
+        )
+        if k == 1:
+            s = jnp.zeros((n, n), dtype=jnp.float64)
+        else:
+            s = (
+                -0.5
+                * fact(k)
+                * sum(scale(k, m) * v[m].T @ v[k - m] for m in range(1, k))
+            )
+            # s = -0.5 * sum(v[m].T @ v[k - m] for m in range(1, k))
+        res = res + s @ e_m[0] + e_m[0] @ s
+        e[k] = jnp.array([res[i, i] for i in range(n)])
+        c = -res * inv_de + s
+
+        v[k] = v[0] @ c
+
+        # if k>1:
+        #     s = -0.5 * fact(k) * sum(scale(k, m) * v[m].T @ v[k - m] for m in range(1, k))
+        #     # s = -0.5 * sum(v[m].T @ v[k - m] for m in range(1, k))
+        #     v[k] = v[0] @ s
+
+        # e_m[k] = fact(k) * sum(
+        #     scale(k, m) * v[0].T @ u[m] @ v[k - m] for m in range(1, k + 1)
+        # )
+        # e[k] = jnp.array([e_m[k][i, i] for i in range(n)])
+
+        # c_j = fact(k) * sum(
+        #     # scale(k, m) * v[0].T @ (u[m]-e_m[m]) @ v[k - m] for m in range(1, k + 1)
+        #     scale(k, m) * v[0].T @ u[m] @ v[k - m]
+        #     for m in range(1, k + 1)
+        # )
+        # c_i = fact(k) * sum(scale(k, m) * v[m].T @ v[k - m] for m in range(1, k))
+
+        # c = -c_j * inv_de - 0.5 * c_i
+        # v[k] = v[0] @ c
+
+    e_primal_out, *e_series_out = e
+    v_primal_out, *v_series_out = v
+    return (e_primal_out, v_primal_out), (e_series_out, v_series_out)
+
 
 #########################
 # matrix LU decomposition

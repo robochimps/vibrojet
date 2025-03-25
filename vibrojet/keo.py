@@ -77,7 +77,6 @@ def eckart(q_ref: np.ndarray, masses: np.ndarray):
     def _wrapper(internal_to_cartesian):
         @functools.wraps(internal_to_cartesian)
         def wrapper_eckart(*args, **kwargs):
-            global c_mat
             xyz = internal_to_cartesian(*args, **kwargs)
             assert len(xyz) == len(masses), (
                 "The number of elements in 'masses' must match the leading dimension of the array "
@@ -115,8 +114,9 @@ def eckart(q_ref: np.ndarray, masses: np.ndarray):
                 ]
             )
 
-            e, v = eigh(c)
+            _, v = eigh(c)
             quar = v[:, 0]
+            # quar = e
 
             u = jnp.array(
                 [
@@ -385,10 +385,17 @@ def det(a):
     return reduce(operator.mul, ud, 1)
 
 
+# @jax.jit
+# def det(a):
+#     e, v  = jnp.linalg.eigh(a)
+#     return reduce(operator.mul, e, 1)
+
+
 @functools.partial(jax.jit, static_argnums=(2,))
 def Detgmat(q, masses, internal_to_cartesian):
     nq = len(q)
     return det(gmat(q, masses, internal_to_cartesian)[: nq + 3, : nq + 3])
+    # return jnp.linalg.det(gmat(q, masses, internal_to_cartesian)[: nq + 3, : nq + 3])
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
