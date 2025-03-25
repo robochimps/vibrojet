@@ -116,7 +116,6 @@ def eckart(q_ref: np.ndarray, masses: np.ndarray):
 
             _, v = eigh(c)
             quar = v[:, 0]
-            # quar = e
 
             u = jnp.array(
                 [

@@ -7,16 +7,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from vibrojet.keo import Gmat, com, eckart, pseudo, gmat
-from vibrojet.taylor import deriv_list, deriv
+from vibrojet.keo import Gmat, com, eckart, pseudo
+from vibrojet.taylor import deriv_list
 
 jax.config.update("jax_enable_x64", True)
 
 
 def water_example(max_order: int = 4):
     """Calculates and stores in files Taylor series expansions
-    of kinetic energy G-matrix and pseudopotential,
-    using the Eckart frame.
+    of the kinetic energy G-matrix and pseudopotential operators
+    of water molecule, using the Eckart frame.
 
     Args:
         max_order (int): The total expansion order.
@@ -37,7 +37,6 @@ def water_example(max_order: int = 4):
     # `eckart` rotates coordinates to the Eckart frame
 
     @eckart(x0, masses)
-    # @com(masses)
     def valence_to_cartesian(internal_coords):
         r1, r2, a = internal_coords
         return jnp.array(
@@ -70,13 +69,9 @@ def water_example(max_order: int = 4):
     # Compute Taylor series expansion coefficients for G-matrix
 
     print("compute expansion of G-matrix ...")
-    # Gmat_coefs = np.zeros((len(deriv_ind), 3, 3), dtype=np.float64)
-    # Gmat_coefs = deriv_list(valence_to_cartesian, deriv_ind, x0, if_taylor=True)
 
     Gmat_coefs = deriv_list(
         lambda x: Gmat(x, masses, valence_to_cartesian),
-        # lambda x: gmat(x, masses, valence_to_cartesian),
-        # lambda x: valence_to_cartesian(x),
         deriv_ind,
         x0,
         if_taylor=True,
@@ -112,38 +107,38 @@ def water_example(max_order: int = 4):
 
     # Compute Taylor series expansion coefficients for pseudopotential
 
-    # print("compute expansion of pseudopotential ...")
-    # pseudo_coefs = deriv_list(
-    #     lambda x: pseudo(x, masses, valence_to_cartesian),
-    #     deriv_ind,
-    #     x0,
-    #     if_taylor=True,
-    # )
+    print("compute expansion of pseudopotential ...")
+    pseudo_coefs = deriv_list(
+        lambda x: pseudo(x, masses, valence_to_cartesian),
+        deriv_ind,
+        x0,
+        if_taylor=True,
+    )
 
     # Store pseudopotential coefficients in ASCII file
 
-    # coefs_file = "water_pseudo_valence"
-    # print("store expansion of pseudopotential in file", coefs_file)
-    # with open(coefs_file + ".txt", "w") as fl:
-    #     fl.write("Reference Cartesian coordinates (Angstrom)\n")
-    #     for m, x in zip(masses, xyz0):
-    #         fl.write(
-    #             "%20.12e" % m + "  " + "  ".join("%20.12e" % elem for elem in x) + "\n"
-    #         )
-    #     fl.write("pseudopotential expansion (cm^-1)\n")
-    #     for c, i in zip(pseudo_coefs, deriv_ind):
-    #         fl.write(
-    #             " ".join("%2i" % elem for elem in i) + "   " + "%20.12e" % c + "\n",
-    #         )
+    coefs_file = "water_pseudo_valence"
+    print("store expansion of pseudopotential in file", coefs_file)
+    with open(coefs_file + ".txt", "w") as fl:
+        fl.write("Reference Cartesian coordinates (Angstrom)\n")
+        for m, x in zip(masses, xyz0):
+            fl.write(
+                "%20.12e" % m + "  " + "  ".join("%20.12e" % elem for elem in x) + "\n"
+            )
+        fl.write("pseudopotential expansion (cm^-1)\n")
+        for c, i in zip(pseudo_coefs, deriv_ind):
+            fl.write(
+                " ".join("%2i" % elem for elem in i) + "   " + "%20.12e" % c + "\n",
+            )
 
     # Additionally, store pseudopotential coefficients in hdf5 file
 
-    # with h5py.File(coefs_file + ".h5", "w") as fl:
-    #     d_xyz = fl.create_dataset("xyz0", data=xyz0)
-    #     d_xyz.attrs["units"] = "Angstrom"
-    #     fl.create_dataset("deriv_ind", data=deriv_ind)
-    #     d_coefs = fl.create_dataset("coefs", data=pseudo_coefs)
-    #     d_coefs.attrs["units"] = "cm^-1"
+    with h5py.File(coefs_file + ".h5", "w") as fl:
+        d_xyz = fl.create_dataset("xyz0", data=xyz0)
+        d_xyz.attrs["units"] = "Angstrom"
+        fl.create_dataset("deriv_ind", data=deriv_ind)
+        d_coefs = fl.create_dataset("coefs", data=pseudo_coefs)
+        d_coefs.attrs["units"] = "cm^-1"
 
 
 if __name__ == "__main__":

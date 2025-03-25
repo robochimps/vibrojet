@@ -79,7 +79,6 @@ def eckart(q_ref, masses):
 
             e, v = jnp.linalg.eigh(c)
             quar = v[:, 0]
-            # quar = e
 
             u = jnp.array(
                 [

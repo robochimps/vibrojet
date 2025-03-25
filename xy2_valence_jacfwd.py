@@ -11,15 +11,14 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.special import factorial
 
-from vibrojet._keo import Gmat, com, eckart, pseudo, gmat
+from vibrojet._keo import Gmat, com, eckart, pseudo
 
 jax.config.update("jax_enable_x64", True)
 
 
 def water_example(max_order: int = 4):
     """Calculates and stores in files Taylor series expansions
-    of kinetic energy G-matrix and pseudopotential,
-    using the Eckart frame.
+    of the kinetic energy G-matrix and pseudopotential, using the Eckart frame.
 
     Args:
         max_order (int): The total expansion order.
@@ -40,7 +39,6 @@ def water_example(max_order: int = 4):
     # `eckart` rotates coordinates to the Eckart frame
 
     @eckart(x0, masses)
-    # @com(masses)
     def valence_to_cartesian(internal_coords):
         r1, r2, a = internal_coords
         return jnp.array(
@@ -74,12 +72,6 @@ def water_example(max_order: int = 4):
 
     print("compute expansion of G-matrix ...")
 
-    # Gmat_coefs = np.zeros((len(deriv_ind), 3, 3), dtype=np.float64)
-    # for i in range(3):
-        # for j in range(3):
-            # func = lambda x: Gmat(x, masses, valence_to_cartesian)[i,j]
-            # func = lambda x: gmat(x, masses, valence_to_cartesian)[i,j]
-    # func = lambda x: valence_to_cartesian(x)
     func = lambda x: Gmat(x, masses, valence_to_cartesian)
 
     def jacfwd(x0, ind):
@@ -88,12 +80,10 @@ def water_example(max_order: int = 4):
             f = jax.jacfwd(f)
         i = sum([(i,) * o for i, o in enumerate(ind)], start=tuple())
         return f(x0)[:, :, *i]
-        # return f(x0)[i]
 
     Gmat_coefs = np.array(
         [jacfwd(x0, ind) / np.prod(factorial(ind)) for ind in deriv_ind]
     )
-    # Gmat_coefs = np.array([gmat(x0, masses, valence_to_cartesian)])
 
     # Store G-matrix coefficients in ASCII file
 
@@ -125,45 +115,45 @@ def water_example(max_order: int = 4):
 
     # Compute Taylor series expansion coefficients for pseudopotential
 
-    # print("compute expansion of pseudopotential ...")
+    print("compute expansion of pseudopotential ...")
 
-    # func = lambda x: pseudo(x, masses, valence_to_cartesian)
+    func = lambda x: pseudo(x, masses, valence_to_cartesian)
 
-    # def jacfwd2(x0, ind):
-    #     f = func
-    #     for _ in range(sum(ind)):
-    #         f = jax.jacfwd(f)
-    #     i = sum([(i,) * o for i, o in enumerate(ind)], start=tuple())
-    #     return f(x0)[i]
+    def jacfwd2(x0, ind):
+        f = func
+        for _ in range(sum(ind)):
+            f = jax.jacfwd(f)
+        i = sum([(i,) * o for i, o in enumerate(ind)], start=tuple())
+        return f(x0)[i]
 
-    # pseudo_coefs = np.array(
-    #     [jacfwd2(x0, ind) / np.prod(factorial(ind)) for ind in deriv_ind]
-    # )
+    pseudo_coefs = np.array(
+        [jacfwd2(x0, ind) / np.prod(factorial(ind)) for ind in deriv_ind]
+    )
 
     # Store pseudopotential coefficients in ASCII file
 
-    # coefs_file = "water_pseudo_valence_jacfwd"
-    # print("store expansion of pseudopotential in file", coefs_file)
-    # with open(coefs_file + ".txt", "w") as fl:
-    #     fl.write("Reference Cartesian coordinates (Angstrom)\n")
-    #     for m, x in zip(masses, xyz0):
-    #         fl.write(
-    #             "%20.12e" % m + "  " + "  ".join("%20.12e" % elem for elem in x) + "\n"
-    #         )
-    #     fl.write("pseudopotential expansion (cm^-1)\n")
-    #     for c, i in zip(pseudo_coefs, deriv_ind):
-    #         fl.write(
-    #             " ".join("%2i" % elem for elem in i) + "   " + "%20.12e" % c + "\n",
-    #         )
+    coefs_file = "water_pseudo_valence_jacfwd"
+    print("store expansion of pseudopotential in file", coefs_file)
+    with open(coefs_file + ".txt", "w") as fl:
+        fl.write("Reference Cartesian coordinates (Angstrom)\n")
+        for m, x in zip(masses, xyz0):
+            fl.write(
+                "%20.12e" % m + "  " + "  ".join("%20.12e" % elem for elem in x) + "\n"
+            )
+        fl.write("pseudopotential expansion (cm^-1)\n")
+        for c, i in zip(pseudo_coefs, deriv_ind):
+            fl.write(
+                " ".join("%2i" % elem for elem in i) + "   " + "%20.12e" % c + "\n",
+            )
 
     # Additionally, store pseudopotential coefficients in hdf5 file
 
-    # with h5py.File(coefs_file + ".h5", "w") as fl:
-    #     d_xyz = fl.create_dataset("xyz0", data=xyz0)
-    #     d_xyz.attrs["units"] = "Angstrom"
-    #     fl.create_dataset("deriv_ind", data=deriv_ind)
-    #     d_coefs = fl.create_dataset("coefs", data=pseudo_coefs)
-    #     d_coefs.attrs["units"] = "cm^-1"
+    with h5py.File(coefs_file + ".h5", "w") as fl:
+        d_xyz = fl.create_dataset("xyz0", data=xyz0)
+        d_xyz.attrs["units"] = "Angstrom"
+        fl.create_dataset("deriv_ind", data=deriv_ind)
+        d_coefs = fl.create_dataset("coefs", data=pseudo_coefs)
+        d_coefs.attrs["units"] = "cm^-1"
 
 
 if __name__ == "__main__":
