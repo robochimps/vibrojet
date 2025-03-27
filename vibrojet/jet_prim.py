@@ -4,7 +4,7 @@ from jax import lax
 from jax.core import ShapedArray
 from jax.experimental import jet
 from jax.extend.core import Primitive
-from jax.interpreters import ad, mlir, batching
+from jax.interpreters import ad, batching, mlir
 
 jax.config.update("jax_enable_x64", True)
 
@@ -329,3 +329,90 @@ def _lu_taylor_rule(primals_in, series_in, **kw):
 
 
 jet.jet_rules[lu_p] = _lu_taylor_rule
+
+
+#######
+# acos
+#######
+
+acos_p = Primitive("_acos")
+
+
+def acos(a, **kw):
+    return acos_p.bind(a, **kw)
+
+
+def acos_impl(a, **kw):
+    return jnp.acos(a)
+
+
+acos_p.def_impl(acos_impl)
+acos_p.multiple_results = False
+
+
+@jax.jit
+def acos_jvp(primals, tangents, **kw):
+    (a,) = primals
+    (da,) = tangents
+    x = acos(a)
+    dx = -1 / jnp.sqrt(1 - a * a) * da
+    return x, dx
+
+
+ad.primitive_jvps[acos_p] = acos_jvp
+
+
+def acos_abstract_eval(a):
+    return ShapedArray(a.shape, a.dtype)
+
+
+acos_p.def_abstract_eval(acos_abstract_eval)
+
+
+def acos_lowering(ctx, a, **kw):
+    return mlir.lower_fun(jnp.acos, multiple_results=False)(ctx, a)
+
+
+mlir.register_lowering(acos_p, acos_lowering)
+
+
+def acos_batch_rule(args, dims):
+    (mat,) = args
+    (dim,) = dims
+    if dim is None:
+        return acos_p(mat), None
+    res = jax.vmap(jnp.acos)(mat)
+    return res, dim
+
+
+batching.primitive_batchers[acos_p] = acos_batch_rule
+
+
+@jax.jit
+def _acos_taylor_rule(primals_in, series_in, **kw):
+    (x,) = primals_in
+    (series,) = series_in
+
+    primal_out = jnp.acos(x)
+
+    c0, cs = jet.jet(
+        lambda x: lax.div(jnp.ones_like(x), -lax.sqrt(1 - lax.square(x))),
+        (x,),
+        (series,),
+    )
+
+    def _scale(k, j):
+        return 1.0 / (fact(k - j) * fact(j - 1))
+
+    c = [c0] + cs
+    u = [x] + series
+    v = [primal_out] + [None] * len(series)
+    for k in range(1, len(v)):
+        v[k] = fact(k - 1) * sum(
+            _scale(k, j) * c[k - j] * u[j] for j in range(1, k + 1)
+        )
+    primal_out, *series_out = v
+    return primal_out, series_out
+
+
+jet.jet_rules[acos_p] = _acos_taylor_rule
