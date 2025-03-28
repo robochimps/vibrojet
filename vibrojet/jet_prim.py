@@ -136,7 +136,7 @@ def eigh_jvp(primals, tangents, **kw):
     de = jnp.array([v[:, i] @ da @ v[:, i] for i in range(len(v))])
     inv_de = jnp.pow(e[:, None] - e[None, :] + eye_, -1) - eye_
     c = (v.T @ da @ v) * inv_de
-    dv = v @ c.T
+    dv = -v @ c
     return (e, v), (de, dv)
 
 
