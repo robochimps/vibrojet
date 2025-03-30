@@ -1,54 +1,27 @@
 import functools
+from enum import Enum
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-from .jet_prim import inv, eckart_kappa
+
+from .jet_prim import eckart_kappa, eigh
+from .jet_prim import set_no_iters_eckart
 
 jax.config.update("jax_enable_x64", True)
 
 
-def eckart_rotation(xyz, xyz_ref, masses, no_iters: int = 10):
-    u = jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * xyz[:, None, :], axis=0)
-
-    mat = jnp.array(
-        [
-            [u[0, 0] + u[1, 1], u[1, 2], -u[0, 2]],
-            [u[2, 1], u[0, 0] + u[2, 2], u[0, 1]],
-            [-u[2, 0], u[1, 0], u[1, 1] + u[2, 2]],
-        ]
-    )
-    imat = inv(mat)
-
-    exp_kappa = jnp.eye(3)
-    l = jnp.eye(3)
-
-    for _ in range(no_iters):
-        rhs = jnp.sum(
-            jnp.array(
-                [
-                    l[0] * u[1] - l[1] * u[0],
-                    l[0] * u[2] - l[2] * u[0],
-                    l[1] * u[2] - l[2] * u[1],
-                ]
-            ),
-            axis=-1,
-        )
-        kxy, kxz, kyz = imat @ rhs
-        kappa = jnp.array(
-            [
-                [0.0, kxy, kxz],
-                [-kxy, 0.0, kyz],
-                [-kxz, -kyz, 0.0],
-            ]
-        )
-        exp_kappa = _expm_pade(-kappa)
-        l = exp_kappa + kappa
-
-    return xyz @ exp_kappa.T
+class EckartMethod(Enum):
+    exp_kappa = "exp(-kappa) method from https://doi.org/10.1063/1.4923039"
+    quaternion = "quaternion algebra method from https://doi.org/10.1063/1.4870936"
 
 
-def eckart(q_ref: np.ndarray, masses: np.ndarray, no_iters: int = 10):
+def eckart(
+    q_ref: np.ndarray,
+    masses: np.ndarray,
+    no_iters: int = 10,
+    method: EckartMethod = EckartMethod.exp_kappa,
+):
 
     def _wrapper(internal_to_cartesian):
         @functools.wraps(internal_to_cartesian)
@@ -59,8 +32,9 @@ def eckart(q_ref: np.ndarray, masses: np.ndarray, no_iters: int = 10):
             xyz = internal_to_cartesian(*args, **kwargs)
 
             assert len(xyz) == len(masses), (
-                "The number of elements in 'masses' must match the leading dimension of the array "
-                "returned by the 'internal_to_cartesian' function"
+                "The number of elements in 'masses' (i.e., number of atoms) must match the leading"
+                "dimension of the Cartesian coordinates array returned by the 'internal_to_cartesian'"
+                "function"
             )
 
             com = masses_ @ xyz / jnp.sum(masses_)
@@ -70,114 +44,70 @@ def eckart(q_ref: np.ndarray, masses: np.ndarray, no_iters: int = 10):
             com_ref = masses_ @ xyz_ref / jnp.sum(masses_)
             xyz_ref -= com_ref
 
-            # kappa = eckart_kappa(xyz, xyz_ref, masses_)
-            # exp_kappa = _expm_pade(-kappa)
-            exp_kappa = eckart_kappa(xyz, xyz_ref, masses_)
+            if method == EckartMethod.exp_kappa:
+                set_no_iters_eckart(no_iters)
+                rot_mat = _eckart_expkappa(xyz, xyz_ref, masses_)
+            else:
+                rot_mat = _eckart_quaternion(xyz, xyz_ref, masses_)
 
-            # u = jnp.sum(
-            #     masses_[:, None, None] * xyz_ref[:, :, None] * xyz[:, None, :], axis=0
-            # )
-            # mat = jnp.array(
-            #     [
-            #         [u[0, 0] + u[1, 1], u[1, 2], -u[0, 2]],
-            #         [u[2, 1], u[0, 0] + u[2, 2], u[0, 1]],
-            #         [-u[2, 0], u[1, 0], u[1, 1] + u[2, 2]],
-            #     ]
-            # )
-            # imat = inv(mat)
-            # exp_kappa = jnp.eye(3)
-            # l = jnp.eye(3)
-            # for _ in range(no_iters):
-            #     rhs = jnp.sum(
-            #         jnp.array(
-            #             [
-            #                 l[0] * u[1] - l[1] * u[0],
-            #                 l[0] * u[2] - l[2] * u[0],
-            #                 l[1] * u[2] - l[2] * u[1],
-            #             ]
-            #         ),
-            #         axis=-1,
-            #     )
-            #     kxy, kxz, kyz = imat @ rhs
-            #     kappa = jnp.array(
-            #         [
-            #             [0.0, kxy, kxz],
-            #             [-kxy, 0.0, kyz],
-            #             [-kxz, -kyz, 0.0],
-            #         ]
-            #     )
-            #     # exp_kappa = _expm_taylor(-kappa, order=10)
-            #     exp_kappa = _expm_pade(-kappa)
-            #     l = exp_kappa + kappa
-
-            return xyz @ exp_kappa.T
+            return xyz @ rot_mat.T
 
         return wrapper_eckart
 
     return _wrapper
 
 
-def _expm_pade(a):
-    b = jnp.array(
+def _eckart_expkappa(xyz, xyz_ref, masses):
+    rot_mat = eckart_kappa(xyz, xyz_ref, masses)
+    return rot_mat
+
+
+def _eckart_quaternion(xyz, xyz_ref, masses):
+    xyz_ma = xyz_ref - xyz
+    xyz_pa = xyz_ref + xyz
+    x_ma, y_ma, z_ma = xyz_ma.T
+    x_pa, y_pa, z_pa = xyz_pa.T
+
+    c11 = jnp.sum(masses * (x_ma**2 + y_ma**2 + z_ma**2))
+    c12 = jnp.sum(masses * (y_pa * z_ma - y_ma * z_pa))
+    c13 = jnp.sum(masses * (x_ma * z_pa - x_pa * z_ma))
+    c14 = jnp.sum(masses * (x_pa * y_ma - x_ma * y_pa))
+    c22 = jnp.sum(masses * (x_ma**2 + y_pa**2 + z_pa**2))
+    c23 = jnp.sum(masses * (x_ma * y_ma - x_pa * y_pa))
+    c24 = jnp.sum(masses * (x_ma * z_ma - x_pa * z_pa))
+    c33 = jnp.sum(masses * (x_pa**2 + y_ma**2 + z_pa**2))
+    c34 = jnp.sum(masses * (y_ma * z_ma - y_pa * z_pa))
+    c44 = jnp.sum(masses * (x_pa**2 + y_pa**2 + z_ma**2))
+
+    c = jnp.array(
         [
-            64764752532480000.0,
-            32382376266240000.0,
-            7771770303897600.0,
-            1187353796428800.0,
-            129060195264000.0,
-            10559470521600.0,
-            670442572800.0,
-            33522128640.0,
-            1323241920.0,
-            40840800.0,
-            960960.0,
-            16380.0,
-            182.0,
-            1.0,
-        ],
-        dtype=jnp.float64,
+            [c11, c12, c13, c14],
+            [c12, c22, c23, c24],
+            [c13, c23, c33, c34],
+            [c14, c24, c34, c44],
+        ]
     )
 
-    a2 = a @ a
-    a4 = a2 @ a2
-    a6 = a2 @ a4
+    e, v = eigh(c)
+    quar = v[:, 0]
 
-    u = a @ (
-        b[13] * a6 @ a6
-        + b[11] * a6 @ a4
-        + b[9] * a6 @ a2
-        + b[7] * a6
-        + b[5] * a4
-        + b[3] * a2
-        + b[1] * jnp.eye(3)
+    rot_mat = jnp.array(
+        [
+            [
+                quar[0] ** 2 + quar[1] ** 2 - quar[2] ** 2 - quar[3] ** 2,
+                2 * (quar[1] * quar[2] + quar[0] * quar[3]),
+                2 * (quar[1] * quar[3] - quar[0] * quar[2]),
+            ],
+            [
+                2 * (quar[1] * quar[2] - quar[0] * quar[3]),
+                quar[0] ** 2 - quar[1] ** 2 + quar[2] ** 2 - quar[3] ** 2,
+                2 * (quar[2] * quar[3] + quar[0] * quar[1]),
+            ],
+            [
+                2 * (quar[1] * quar[3] + quar[0] * quar[2]),
+                2 * (quar[2] * quar[3] - quar[0] * quar[1]),
+                quar[0] ** 2 - quar[1] ** 2 - quar[2] ** 2 + quar[3] ** 2,
+            ],
+        ]
     )
-
-    v = (
-        b[12] * a6 @ a6
-        + b[10] * a6 @ a4
-        + b[8] * a6 @ a2
-        + b[6] * a6
-        + b[4] * a4
-        + b[2] * a2
-        + b[0] * jnp.eye(3)
-    )
-
-    return inv(v - u) @ (v + u)
-
-
-def _expm_taylor(a, order: int = 10):
-    # norm = jnp.linalg.norm(a)
-    # scaling = jnp.maximum(0, jnp.ceil(jnp.log2(norm)).astype(int))
-    scaling = 2
-    a_scaled = a / (2**scaling)
-
-    exp_a = jnp.eye(a.shape[0])
-    a_ = jnp.eye(a.shape[0])
-
-    for k in range(1, order + 1):
-        a_ = a_ @ a_scaled / k
-        exp_a += a_
-
-    for _ in range(scaling):
-        exp_a = exp_a @ exp_a
-    return exp_a
+    return rot_mat

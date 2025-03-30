@@ -9,6 +9,16 @@ from jax.interpreters import ad, batching, mlir
 jax.config.update("jax_enable_x64", True)
 
 
+def set_no_iters_eckart(n):
+    global NO_ITERS_ECKART
+    NO_ITERS_ECKART = n
+
+
+NO_ITERS_ECKART = (
+    10  # no. iterations in the solution of Eckart equations in `eckart_kappa`
+)
+
+
 def fact(n):
     return lax.exp(lax.lgamma(n + 1.0))
 
@@ -433,7 +443,7 @@ def eckart_kappa(xyz, xyz_ref, masses, **kw):
     return eckart_kappa_p.bind(xyz, xyz_ref, masses, **kw)
 
 
-def _solve_eckart(xyz, xyz_ref, masses, **kw):
+def _solve_eckart(xyz, xyz_ref, masses):
     u = jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * xyz[:, None, :], axis=0)
     umat = jnp.array(
         [
@@ -448,12 +458,7 @@ def _solve_eckart(xyz, xyz_ref, masses, **kw):
     kappa = jnp.zeros_like(exp_kappa)
     l = jnp.eye(3)
 
-    if "no_iters" in kw:
-        no_iters = kw["no_iters"]
-    else:
-        no_iters = 10
-
-    for _ in range(no_iters):
+    for _ in range(NO_ITERS_ECKART):
         rhs = jnp.sum(
             jnp.array(
                 [
@@ -478,7 +483,7 @@ def _solve_eckart(xyz, xyz_ref, masses, **kw):
 
 
 def eckart_kappa_impl(xyz, xyz_ref, masses, **kw):
-    exp_kappa, *_ = _solve_eckart(xyz, xyz_ref, masses, **kw)
+    exp_kappa, _ = _solve_eckart(xyz, xyz_ref, masses, **kw)
     return exp_kappa
 
 
@@ -527,6 +532,49 @@ def eckart_kappa_lowering(ctx, *ar, **kw):
 
 
 mlir.register_lowering(eckart_kappa_p, eckart_kappa_lowering)
+
+
+@jax.jit
+def eckart_kappa_taylor_rule(primals_in, series_in, **kw):
+    xyz, xyz_ref, masses = primals_in
+    dxyz, dxyz_ref, dmasses = series_in
+
+    exp_kappa, inv_umat = _solve_eckart(xyz, xyz_ref, masses, **kw)
+
+    dxyz_ = [elem @ exp_kappa.T for elem in [xyz] + dxyz]
+    du = [
+        jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * elem[:, None, :], axis=0)
+        for elem in dxyz_
+    ]
+
+    dkappa = [exp_kappa] + [None] * len(dxyz)
+
+    def scale(k, j):
+        return 1.0 / (fact(k - j) * fact(j))
+
+    for k in range(1, len(du)):
+        rhs = du[k].T - du[k]
+        if k > 1:
+            rhs -= fact(k) * sum(
+                scale(k, m) * dkappa[m] @ du[k - m].T + du[m] @ dkappa[k - m]
+                for m in range(1, k)
+            )
+
+        dkxy, dkxz, dkyz = inv_umat @ jnp.array([rhs[0, 1], rhs[0, 2], rhs[1, 2]])
+        dkappa[k] = jnp.array(
+            [
+                [0.0, dkxy, dkxz],
+                [-dkxy, 0.0, dkyz],
+                [-dkxz, -dkyz, 0.0],
+            ]
+        )
+
+    primal_out = dkappa[0]
+    series_out = [-elem for elem in dkappa[1:]]
+    return primal_out, series_out
+
+
+jet.jet_rules[eckart_kappa_p] = eckart_kappa_taylor_rule
 
 
 def _expm_pade(a):
