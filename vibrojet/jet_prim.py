@@ -416,3 +416,162 @@ def _acos_taylor_rule(primals_in, series_in, **kw):
 
 
 jet.jet_rules[acos_p] = _acos_taylor_rule
+
+
+##############
+# Eckart kappa
+##############
+
+# Implementation of frame rotation matrix that satisfy the Eckart conditions
+# A. Yachmenev, S. N. Yurchenko, J. Chem. Phys. 143, 014105 (2015),
+# https://doi.org/10.1063/1.4923039
+
+eckart_kappa_p = Primitive("_eckart_kappa")
+
+
+def eckart_kappa(xyz, xyz_ref, masses, **kw):
+    return eckart_kappa_p.bind(xyz, xyz_ref, masses, **kw)
+
+
+def _solve_eckart(xyz, xyz_ref, masses, **kw):
+    u = jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * xyz[:, None, :], axis=0)
+    umat = jnp.array(
+        [
+            [u[0, 0] + u[1, 1], u[1, 2], -u[0, 2]],
+            [u[2, 1], u[0, 0] + u[2, 2], u[0, 1]],
+            [-u[2, 0], u[1, 0], u[1, 1] + u[2, 2]],
+        ]
+    )
+    inv_umat = inv(umat)
+
+    exp_kappa = jnp.eye(3)
+    kappa = jnp.zeros_like(exp_kappa)
+    l = jnp.eye(3)
+
+    if "no_iters" in kw:
+        no_iters = kw["no_iters"]
+    else:
+        no_iters = 10
+
+    for _ in range(no_iters):
+        rhs = jnp.sum(
+            jnp.array(
+                [
+                    l[0] * u[1] - l[1] * u[0],
+                    l[0] * u[2] - l[2] * u[0],
+                    l[1] * u[2] - l[2] * u[1],
+                ]
+            ),
+            axis=-1,
+        )
+        kxy, kxz, kyz = inv_umat @ rhs
+        kappa = jnp.array(
+            [
+                [0.0, kxy, kxz],
+                [-kxy, 0.0, kyz],
+                [-kxz, -kyz, 0.0],
+            ]
+        )
+        exp_kappa = _expm_pade(-kappa)
+        l = exp_kappa + kappa
+    return exp_kappa, inv_umat
+
+
+def eckart_kappa_impl(xyz, xyz_ref, masses, **kw):
+    exp_kappa, *_ = _solve_eckart(xyz, xyz_ref, masses, **kw)
+    return exp_kappa
+
+
+eckart_kappa_p.def_impl(eckart_kappa_impl)
+eckart_kappa_p.multiple_results = False
+
+
+@jax.jit
+def eckart_kappa_jvp(primals, tangents, **kw):
+    xyz, xyz_ref, masses = primals
+    dxyz, dxyz_ref, dmasses = tangents
+
+    exp_kappa, inv_umat = _solve_eckart(xyz, xyz_ref, masses, **kw)
+
+    dxyz_ = dxyz @ exp_kappa.T
+    du = jnp.sum(
+        masses[:, None, None] * xyz_ref[:, :, None] * dxyz_[:, None, :], axis=0
+    )
+    rhs = du.T - du
+    dkxy, dkxz, dkyz = inv_umat @ jnp.array([rhs[0, 1], rhs[0, 2], rhs[1, 2]])
+    dkappa = jnp.array(
+        [
+            [0.0, dkxy, dkxz],
+            [-dkxy, 0.0, dkyz],
+            [-dkxz, -dkyz, 0.0],
+        ]
+    )
+    dexp_kappa = -exp_kappa @ dkappa
+    return exp_kappa, dexp_kappa
+
+
+ad.primitive_jvps[eckart_kappa_p] = eckart_kappa_jvp
+
+
+def eckart_kappa_abstact_eval(xyz, xyz_ref, masses, **kw):
+    return ShapedArray((3, 3), xyz.dtype)
+
+
+eckart_kappa_p.def_abstract_eval(eckart_kappa_abstact_eval)
+
+
+def eckart_kappa_lowering(ctx, *ar, **kw):
+    return mlir.lower_fun(
+        lambda *ar, **kw: _solve_eckart(*ar, **kw)[0], multiple_results=False
+    )(ctx, *ar, **kw)
+
+
+mlir.register_lowering(eckart_kappa_p, eckart_kappa_lowering)
+
+
+def _expm_pade(a):
+    b = jnp.array(
+        [
+            64764752532480000.0,
+            32382376266240000.0,
+            7771770303897600.0,
+            1187353796428800.0,
+            129060195264000.0,
+            10559470521600.0,
+            670442572800.0,
+            33522128640.0,
+            1323241920.0,
+            40840800.0,
+            960960.0,
+            16380.0,
+            182.0,
+            1.0,
+        ],
+        dtype=jnp.float64,
+    )
+
+    a2 = a @ a
+    a4 = a2 @ a2
+    a6 = a2 @ a4
+
+    u = a @ (
+        b[13] * a6 @ a6
+        + b[11] * a6 @ a4
+        + b[9] * a6 @ a2
+        + b[7] * a6
+        + b[5] * a4
+        + b[3] * a2
+        + b[1] * jnp.eye(3)
+    )
+
+    v = (
+        b[12] * a6 @ a6
+        + b[10] * a6 @ a4
+        + b[8] * a6 @ a2
+        + b[6] * a6
+        + b[4] * a4
+        + b[2] * a2
+        + b[0] * jnp.eye(3)
+    )
+
+    return inv(v - u) @ (v + u)
