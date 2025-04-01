@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .jet_prim import eckart_kappa, eigh
-from .jet_prim import set_no_iters_eckart
+from .jet_prim import set_no_iters_eckart, _solve_eckart
 
 jax.config.update("jax_enable_x64", True)
 
@@ -14,6 +14,10 @@ jax.config.update("jax_enable_x64", True)
 class EckartMethod(Enum):
     exp_kappa = "exp(-kappa) method from https://doi.org/10.1063/1.4923039"
     quaternion = "quaternion algebra method from https://doi.org/10.1063/1.4870936"
+    exp_kappa_direct = (
+        "exp(-kappa) method from https://doi.org/10.1063/1.4923039, "
+        + "direct differentiation through iterative solver"
+    )
 
 
 def eckart(
@@ -47,8 +51,10 @@ def eckart(
             if method == EckartMethod.exp_kappa:
                 set_no_iters_eckart(no_iters)
                 rot_mat = _eckart_expkappa(xyz, xyz_ref, masses_)
-            else:
+            elif method == EckartMethod.quaternion:
                 rot_mat = _eckart_quaternion(xyz, xyz_ref, masses_)
+            else:
+                rot_mat = _eckart_expkappa_direct(xyz, xyz_ref, masses_)
 
             return xyz @ rot_mat.T
 
@@ -59,6 +65,11 @@ def eckart(
 
 def _eckart_expkappa(xyz, xyz_ref, masses):
     rot_mat = eckart_kappa(xyz, xyz_ref, masses)
+    return rot_mat
+
+
+def _eckart_expkappa_direct(xyz, xyz_ref, masses):
+    rot_mat, _ = _solve_eckart(xyz, xyz_ref, masses)
     return rot_mat
 
 

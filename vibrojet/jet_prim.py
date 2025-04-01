@@ -496,13 +496,27 @@ def eckart_kappa_jvp(primals, tangents, **kw):
     xyz, xyz_ref, masses = primals
     dxyz, dxyz_ref, dmasses = tangents
 
-    exp_kappa, inv_umat = _solve_eckart(xyz, xyz_ref, masses, **kw)
+    exp_kappa, _ = _solve_eckart(xyz, xyz_ref, masses, **kw)
 
-    dxyz_ = dxyz @ exp_kappa.T
-    du = jnp.sum(
-        masses[:, None, None] * xyz_ref[:, :, None] * dxyz_[:, None, :], axis=0
+    u = jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * xyz[:, None, :], axis=0)
+    du = jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * dxyz[:, None, :], axis=0)
+
+    k1 = jnp.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
+    k2 = jnp.array([[0, 0, 1], [0, 0, 0], [-1, 0, 0]])
+    k3 = jnp.array([[0, 0, 0], [0, 0, 1], [0, -1, 0]])
+    a1 = u @ k1 @ exp_kappa.T + exp_kappa @ k1 @ u.T
+    a2 = u @ k2 @ exp_kappa.T + exp_kappa @ k2 @ u.T
+    a3 = u @ k3 @ exp_kappa.T + exp_kappa @ k3 @ u.T
+    umat = jnp.array(
+        [
+            [a1[0, 1], a2[0, 1], a3[0, 1]],
+            [a1[0, 2], a2[0, 2], a3[0, 2]],
+            [a1[1, 2], a2[1, 2], a3[1, 2]],
+        ]
     )
-    rhs = du.T - du
+    inv_umat = inv(umat)
+
+    rhs = exp_kappa @ du.T - du @ exp_kappa.T
     dkxy, dkxz, dkyz = inv_umat @ jnp.array([rhs[0, 1], rhs[0, 2], rhs[1, 2]])
     dkappa = jnp.array(
         [
