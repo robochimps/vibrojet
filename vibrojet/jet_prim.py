@@ -411,7 +411,7 @@ def _acos_taylor_rule(primals_in, series_in, **kw):
         (series,),
     )
 
-    def _scale(k, j):
+    def scale_(k, j):
         return 1.0 / (fact(k - j) * fact(j - 1))
 
     c = [c0] + cs
@@ -419,7 +419,7 @@ def _acos_taylor_rule(primals_in, series_in, **kw):
     v = [primal_out] + [None] * len(series)
     for k in range(1, len(v)):
         v[k] = fact(k - 1) * sum(
-            _scale(k, j) * c[k - j] * u[j] for j in range(1, k + 1)
+            scale_(k, j) * c[k - j] * u[j] for j in range(1, k + 1)
         )
     primal_out, *series_out = v
     return primal_out, series_out
@@ -479,7 +479,7 @@ def _solve_eckart(xyz, xyz_ref, masses):
         )
         exp_kappa = _expm_pade(-kappa)
         l = exp_kappa + kappa
-    return exp_kappa, inv_umat
+    return exp_kappa, kappa
 
 
 def eckart_kappa_impl(xyz, xyz_ref, masses, **kw):
@@ -553,26 +553,55 @@ def eckart_kappa_taylor_rule(primals_in, series_in, **kw):
     xyz, xyz_ref, masses = primals_in
     dxyz, dxyz_ref, dmasses = series_in
 
-    exp_kappa, inv_umat = _solve_eckart(xyz, xyz_ref, masses, **kw)
+    exp_kappa, kappa = _solve_eckart(xyz, xyz_ref, masses, **kw)
 
-    dxyz_ = [elem @ exp_kappa.T for elem in [xyz] + dxyz]
+    # linear-system matrix for a k-order derivative
+    # is the same as for the first-oder derivaive in `exp_kappa_jvp`
+    u = jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * xyz[:, None, :], axis=0)
+    k1 = jnp.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
+    k2 = jnp.array([[0, 0, 1], [0, 0, 0], [-1, 0, 0]])
+    k3 = jnp.array([[0, 0, 0], [0, 0, 1], [0, -1, 0]])
+    a1 = u @ k1 @ exp_kappa.T + exp_kappa @ k1 @ u.T
+    a2 = u @ k2 @ exp_kappa.T + exp_kappa @ k2 @ u.T
+    a3 = u @ k3 @ exp_kappa.T + exp_kappa @ k3 @ u.T
+    umat = jnp.array(
+        [
+            [a1[0, 1], a2[0, 1], a3[0, 1]],
+            [a1[0, 2], a2[0, 2], a3[0, 2]],
+            [a1[1, 2], a2[1, 2], a3[1, 2]],
+        ]
+    )
+    inv_umat = inv(umat)
+
     du = [
         jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * elem[:, None, :], axis=0)
-        for elem in dxyz_
+        for elem in [xyz] + dxyz
     ]
-
-    dkappa = [exp_kappa] + [None] * len(dxyz)
+    dkappa = [kappa] + [None] * len(dxyz)
+    dexp_kappa = [exp_kappa] + [None] * len(dxyz)
 
     def scale(k, j):
         return 1.0 / (fact(k - j) * fact(j))
 
+    def scale_(k, j):
+        return 1.0 / (fact(k - j) * fact(j - 1))
+
     for k in range(1, len(du)):
-        rhs = du[k].T - du[k]
+
+        rhs = dexp_kappa[0] @ du[k].T - du[k] @ dexp_kappa[0].T
+
         if k > 1:
-            rhs -= fact(k) * sum(
-                scale(k, m) * dkappa[m] @ du[k - m].T + du[m] @ dkappa[k - m]
+            d = fact(k - 1) * sum(
+                scale_(k, m) * dexp_kappa[k - m] @ dkappa[m] for m in range(1, k)
+            )
+            rhs1 = du[0] @ d.T - d @ du[0].T
+
+            rhs2 = fact(k) * sum(
+                scale(k, m) * dexp_kappa[m] @ du[k - m].T - du[m] @ dexp_kappa[k - m].T
                 for m in range(1, k)
             )
+
+            rhs = rhs + rhs1 + rhs2
 
         dkxy, dkxz, dkyz = inv_umat @ jnp.array([rhs[0, 1], rhs[0, 2], rhs[1, 2]])
         dkappa[k] = jnp.array(
@@ -582,9 +611,11 @@ def eckart_kappa_taylor_rule(primals_in, series_in, **kw):
                 [-dkxz, -dkyz, 0.0],
             ]
         )
+        dexp_kappa[k] = -fact(k - 1) * sum(
+            scale_(k, m) * dexp_kappa[k - m] @ dkappa[m] for m in range(1, k + 1)
+        )
 
-    primal_out = dkappa[0]
-    series_out = [-elem for elem in dkappa[1:]]
+    primal_out, *series_out = dexp_kappa
     return primal_out, series_out
 
 
