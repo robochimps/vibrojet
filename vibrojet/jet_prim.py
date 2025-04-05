@@ -531,7 +531,7 @@ def eckart_kappa_jvp(primals, tangents, **kw):
                 [-dkxz, -dkyz, 0.0],
             ]
         )
-        dexp_kappa = _expm_taylor_squaring([-kappa, -dkappa], 1)
+        dexp_kappa = _expm_taylor_squaring([-kappa, -dkappa])[1]
         dl = dexp_kappa + dkappa
 
     return exp_kappa, dexp_kappa
@@ -607,7 +607,9 @@ def eckart_kappa_taylor_rule(primals_in, series_in, **kw):
                     [-dkxz, -dkyz, 0.0],
                 ]
             )
-            dexp_kappa[k] = _expm_taylor_squaring([-elem for elem in dkappa[: k + 1]], k)
+            dexp_kappa[k] = _expm_taylor_squaring(
+                [-elem for elem in dkappa[: k + 1]],
+            )[k]
             dl = dexp_kappa[k] + dkappa[k]
 
     primal_out, *series_out = dexp_kappa
@@ -617,18 +619,7 @@ def eckart_kappa_taylor_rule(primals_in, series_in, **kw):
 jet.jet_rules[eckart_kappa_p] = eckart_kappa_taylor_rule
 
 
-# def _expm_skew(a):
-#     a2 = a @ a
-#     theta = jnp.sqrt(a[0, 1] ** 2 + a[0, 2] ** 2 + a[1, 2] ** 2)
-#     if theta < 1e-8:
-#         sin_t_over_t = 1 - theta**2 / 6 + theta**4 / 120
-#         one_minus_cos_t_over_t2 = 0.5 - theta**2 / 24 + theta**4 / 720
-#     else:
-#         sin_t_over_t = jnp.sin(theta) / theta
-#         one_minus_cos_t_over_t2 = (1 - jnp.cos(theta)) / (theta**2)
-#     return jnp.eye(3) - sin_t_over_t * a + one_minus_cos_t_over_t2 * a2
-
-
+@jax.jit
 def _expm_pade(a):
     b = jnp.array(
         [
@@ -677,6 +668,7 @@ def _expm_pade(a):
     return inv(v - u) @ (v + u)
 
 
+@jax.jit
 def _matprod_taylor(a, b):
     ab = [None] * len(a)
 
@@ -688,6 +680,7 @@ def _matprod_taylor(a, b):
     return ab
 
 
+@jax.jit
 def _expm_taylor(a, k):
     if k == 0:
         at = jnp.eye(len(a[k])) + a[k]
@@ -703,12 +696,13 @@ def _expm_taylor(a, k):
     return at
 
 
-def _expm_taylor_squaring(a, k):
+@jax.jit
+def _expm_taylor_squaring(a):
     no_sq = PARAMS["EXP_TAYLOR_SQUARING"]
     sq = 1 / 2**no_sq
     a_sq = [elem * sq for elem in a]
     at = [elem for elem in a_sq]
-    at[0] += jnp.eye(len(a_sq[k]))
+    at[0] += jnp.eye(len(a[0]))
     ap = _matprod_taylor(a_sq, a_sq)
     fac = 0.5
     at = [el1 + el2 * fac for el1, el2 in zip(at, ap)]
@@ -719,4 +713,4 @@ def _expm_taylor_squaring(a, k):
     # squaring
     for _ in range(no_sq):
         at = _matprod_taylor(at, at)
-    return at[k]
+    return at
