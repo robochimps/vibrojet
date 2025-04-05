@@ -9,14 +9,20 @@ from jax.interpreters import ad, batching, mlir
 jax.config.update("jax_enable_x64", True)
 
 
-def set_no_iters_eckart(n):
-    global NO_ITERS_ECKART
-    NO_ITERS_ECKART = n
+PARAMS = {
+    "NO_ITERS_ECKART": 10,
+    "EXP_TAYLOR_ORDER": 10,
+    "EXP_TAYLOR_SQUARING": 4,
+}
 
 
-NO_ITERS_ECKART = (
-    10  # no. iterations in the solution of Eckart equations in `eckart_kappa`
-)
+def set_params(**kw):
+    for key, val in kw.items():
+        if key in PARAMS:
+            # print(f"set parameter '{key}' = {val}")
+            PARAMS[key] = val
+        else:
+            raise KeyError(f"Unknown parameter name: {key}")
 
 
 def fact(n):
@@ -443,6 +449,7 @@ def eckart_kappa(xyz, xyz_ref, masses, **kw):
     return eckart_kappa_p.bind(xyz, xyz_ref, masses, **kw)
 
 
+@jax.jit
 def _solve_eckart(xyz, xyz_ref, masses):
     u = jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * xyz[:, None, :], axis=0)
     umat = jnp.array(
@@ -458,7 +465,7 @@ def _solve_eckart(xyz, xyz_ref, masses):
     kappa = jnp.zeros_like(exp_kappa)
     l = jnp.eye(3)
 
-    for _ in range(NO_ITERS_ECKART):
+    for _ in range(PARAMS["NO_ITERS_ECKART"]):
         rhs = jnp.sum(
             jnp.array(
                 [
@@ -496,36 +503,37 @@ def eckart_kappa_jvp(primals, tangents, **kw):
     xyz, xyz_ref, masses = primals
     dxyz, dxyz_ref, dmasses = tangents
 
-    exp_kappa, _ = _solve_eckart(xyz, xyz_ref, masses, **kw)
+    exp_kappa, kappa = _solve_eckart(xyz, xyz_ref, masses, **kw)
 
     u = jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * xyz[:, None, :], axis=0)
     du = jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * dxyz[:, None, :], axis=0)
 
-    k1 = jnp.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
-    k2 = jnp.array([[0, 0, 1], [0, 0, 0], [-1, 0, 0]])
-    k3 = jnp.array([[0, 0, 0], [0, 0, 1], [0, -1, 0]])
-    a1 = u @ k1 @ exp_kappa.T + exp_kappa @ k1 @ u.T
-    a2 = u @ k2 @ exp_kappa.T + exp_kappa @ k2 @ u.T
-    a3 = u @ k3 @ exp_kappa.T + exp_kappa @ k3 @ u.T
     umat = jnp.array(
         [
-            [a1[0, 1], a2[0, 1], a3[0, 1]],
-            [a1[0, 2], a2[0, 2], a3[0, 2]],
-            [a1[1, 2], a2[1, 2], a3[1, 2]],
+            [u[0, 0] + u[1, 1], u[1, 2], -u[0, 2]],
+            [u[2, 1], u[0, 0] + u[2, 2], u[0, 1]],
+            [-u[2, 0], u[1, 0], u[1, 1] + u[2, 2]],
         ]
     )
     inv_umat = inv(umat)
 
+    dl = jnp.zeros((3, 3))
+    dexp_kappa = jnp.zeros((3, 3))
     rhs = exp_kappa @ du.T - du @ exp_kappa.T
-    dkxy, dkxz, dkyz = inv_umat @ jnp.array([rhs[0, 1], rhs[0, 2], rhs[1, 2]])
-    dkappa = jnp.array(
-        [
-            [0.0, dkxy, dkxz],
-            [-dkxy, 0.0, dkyz],
-            [-dkxz, -dkyz, 0.0],
-        ]
-    )
-    dexp_kappa = -exp_kappa @ dkappa
+
+    for _ in range(PARAMS["NO_ITERS_ECKART"]):
+        rhs_ = rhs + dl @ u.T - u @ dl.T
+        dkxy, dkxz, dkyz = inv_umat @ jnp.array([rhs_[0, 1], rhs_[0, 2], rhs_[1, 2]])
+        dkappa = jnp.array(
+            [
+                [0.0, dkxy, dkxz],
+                [-dkxy, 0.0, dkyz],
+                [-dkxz, -dkyz, 0.0],
+            ]
+        )
+        dexp_kappa = _expm_taylor_squaring([-kappa, -dkappa], 1)
+        dl = dexp_kappa + dkappa
+
     return exp_kappa, dexp_kappa
 
 
@@ -555,71 +563,70 @@ def eckart_kappa_taylor_rule(primals_in, series_in, **kw):
 
     exp_kappa, kappa = _solve_eckart(xyz, xyz_ref, masses, **kw)
 
-    # linear-system matrix for a k-order derivative
-    # is the same as for the first-oder derivaive in `exp_kappa_jvp`
     u = jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * xyz[:, None, :], axis=0)
-    k1 = jnp.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
-    k2 = jnp.array([[0, 0, 1], [0, 0, 0], [-1, 0, 0]])
-    k3 = jnp.array([[0, 0, 0], [0, 0, 1], [0, -1, 0]])
-    a1 = u @ k1 @ exp_kappa.T + exp_kappa @ k1 @ u.T
-    a2 = u @ k2 @ exp_kappa.T + exp_kappa @ k2 @ u.T
-    a3 = u @ k3 @ exp_kappa.T + exp_kappa @ k3 @ u.T
+    du = [u] + [
+        jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * elem[:, None, :], axis=0)
+        for elem in dxyz
+    ]
+
     umat = jnp.array(
         [
-            [a1[0, 1], a2[0, 1], a3[0, 1]],
-            [a1[0, 2], a2[0, 2], a3[0, 2]],
-            [a1[1, 2], a2[1, 2], a3[1, 2]],
+            [u[0, 0] + u[1, 1], u[1, 2], -u[0, 2]],
+            [u[2, 1], u[0, 0] + u[2, 2], u[0, 1]],
+            [-u[2, 0], u[1, 0], u[1, 1] + u[2, 2]],
         ]
     )
     inv_umat = inv(umat)
 
-    du = [
-        jnp.sum(masses[:, None, None] * xyz_ref[:, :, None] * elem[:, None, :], axis=0)
-        for elem in [xyz] + dxyz
-    ]
     dkappa = [kappa] + [None] * len(dxyz)
     dexp_kappa = [exp_kappa] + [None] * len(dxyz)
 
     def scale(k, j):
         return 1.0 / (fact(k - j) * fact(j))
 
-    def scale_(k, j):
-        return 1.0 / (fact(k - j) * fact(j - 1))
-
     for k in range(1, len(du)):
 
         rhs = dexp_kappa[0] @ du[k].T - du[k] @ dexp_kappa[0].T
 
         if k > 1:
-            d = fact(k - 1) * sum(
-                scale_(k, m) * dexp_kappa[k - m] @ dkappa[m] for m in range(1, k)
-            )
-            rhs1 = du[0] @ d.T - d @ du[0].T
-
             rhs2 = fact(k) * sum(
-                scale(k, m) * dexp_kappa[m] @ du[k - m].T - du[m] @ dexp_kappa[k - m].T
-                for m in range(1, k)
+                scale(k, m) * dexp_kappa[m] @ du[k - m].T for m in range(1, k)
             )
+            rhs += rhs2 - rhs2.T
 
-            rhs = rhs + rhs1 + rhs2
-
-        dkxy, dkxz, dkyz = inv_umat @ jnp.array([rhs[0, 1], rhs[0, 2], rhs[1, 2]])
-        dkappa[k] = jnp.array(
-            [
-                [0.0, dkxy, dkxz],
-                [-dkxy, 0.0, dkyz],
-                [-dkxz, -dkyz, 0.0],
-            ]
-        )
-        dexp_kappa[k] = -fact(k - 1) * sum(
-            scale_(k, m) * dexp_kappa[k - m] @ dkappa[m] for m in range(1, k + 1)
-        )
+        dl = jnp.zeros((3, 3))
+        for _ in range(PARAMS["NO_ITERS_ECKART"]):
+            rhs_ = rhs + (dl @ du[0].T - du[0] @ dl.T)
+            dkxy, dkxz, dkyz = inv_umat @ jnp.array(
+                [rhs_[0, 1], rhs_[0, 2], rhs_[1, 2]]
+            )
+            dkappa[k] = jnp.array(
+                [
+                    [0.0, dkxy, dkxz],
+                    [-dkxy, 0.0, dkyz],
+                    [-dkxz, -dkyz, 0.0],
+                ]
+            )
+            dexp_kappa[k] = _expm_taylor_squaring([-elem for elem in dkappa[: k + 1]], k)
+            dl = dexp_kappa[k] + dkappa[k]
 
     primal_out, *series_out = dexp_kappa
     return primal_out, series_out
 
 
 jet.jet_rules[eckart_kappa_p] = eckart_kappa_taylor_rule
+
+
+# def _expm_skew(a):
+#     a2 = a @ a
+#     theta = jnp.sqrt(a[0, 1] ** 2 + a[0, 2] ** 2 + a[1, 2] ** 2)
+#     if theta < 1e-8:
+#         sin_t_over_t = 1 - theta**2 / 6 + theta**4 / 120
+#         one_minus_cos_t_over_t2 = 0.5 - theta**2 / 24 + theta**4 / 720
+#     else:
+#         sin_t_over_t = jnp.sin(theta) / theta
+#         one_minus_cos_t_over_t2 = (1 - jnp.cos(theta)) / (theta**2)
+#     return jnp.eye(3) - sin_t_over_t * a + one_minus_cos_t_over_t2 * a2
 
 
 def _expm_pade(a):
@@ -668,3 +675,48 @@ def _expm_pade(a):
     )
 
     return inv(v - u) @ (v + u)
+
+
+def _matprod_taylor(a, b):
+    ab = [None] * len(a)
+
+    def scale(k, j):
+        return 1.0 / (fact(k - j) * fact(j))
+
+    for k in range(len(a)):
+        ab[k] = fact(k) * sum(scale(k, m) * a[m] @ b[k - m] for m in range(k + 1))
+    return ab
+
+
+def _expm_taylor(a, k):
+    if k == 0:
+        at = jnp.eye(len(a[k])) + a[k]
+    else:
+        at = a[k]
+    ap = _matprod_taylor(a, a)
+    fac = 0.5
+    at = at + ap[k] * fac
+    for i in range(3, PARAMS["EXP_TAYLOR_ORDER"]):
+        ap = _matprod_taylor(ap, a)
+        fac = fac / i
+        at = at + ap[k] * fac
+    return at
+
+
+def _expm_taylor_squaring(a, k):
+    no_sq = PARAMS["EXP_TAYLOR_SQUARING"]
+    sq = 1 / 2**no_sq
+    a_sq = [elem * sq for elem in a]
+    at = [elem for elem in a_sq]
+    at[0] += jnp.eye(len(a_sq[k]))
+    ap = _matprod_taylor(a_sq, a_sq)
+    fac = 0.5
+    at = [el1 + el2 * fac for el1, el2 in zip(at, ap)]
+    for i in range(3, PARAMS["EXP_TAYLOR_ORDER"]):
+        ap = _matprod_taylor(ap, a_sq)
+        fac = fac / i
+        at = [el1 + el2 * fac for el1, el2 in zip(at, ap)]
+    # squaring
+    for _ in range(no_sq):
+        at = _matprod_taylor(at, at)
+    return at[k]

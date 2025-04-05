@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy import constants
 
-from .jet_prim import eigh, inv, lu
+from .jet_prim import eigh, inv, lu, acos
 
 jax.config.update("jax_enable_x64", True)
 
@@ -114,7 +114,7 @@ def eckart(q_ref: np.ndarray, masses: np.ndarray):
                 ]
             )
 
-            _, v = eigh(c)
+            e, v = eigh(c)
             quar = v[:, 0]
 
             u = jnp.array(
@@ -272,11 +272,11 @@ def zmatrix_coordinates(
             n1 = jnp.cross(n2, n3)
 
             cosa3 = jnp.sum(n2 * v23) / jnp.linalg.norm(v23)
-            alpha3 = jnp.acos(cosa3)
+            alpha3 = acos(cosa3)
             cosphi = (jnp.cos(beta) - jnp.cos(alpha) * jnp.cos(alpha3)) / (
                 jnp.sin(alpha) * jnp.sin(alpha3)
             )
-            phi = jnp.acos(cosphi)
+            phi = acos(cosphi)
 
             xyz.append(
                 xyz[p1]
@@ -345,11 +345,11 @@ def zmatrix_coordinates(
             n1 = jnp.cross(n3, n2)
 
             cosa3 = jnp.sum(n2 * v23) / jnp.linalg.norm(v23)
-            alpha3 = jnp.acos(cosa3)
+            alpha3 = acos(cosa3)
             cosphi = (jnp.cos(beta) - jnp.cos(alpha) * jnp.cos(alpha3)) / (
                 jnp.sin(alpha) * jnp.sin(alpha3)
             )
-            phi = jnp.acos(cosphi)
+            phi = acos(cosphi)
 
             xyz.append(
                 xyz[p1]

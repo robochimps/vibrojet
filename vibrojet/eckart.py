@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .jet_prim import eckart_kappa, eigh
-from .jet_prim import set_no_iters_eckart, _solve_eckart
+from .jet_prim import set_params, _solve_eckart
 
 jax.config.update("jax_enable_x64", True)
 
@@ -24,6 +24,8 @@ def eckart(
     q_ref: np.ndarray,
     masses: np.ndarray,
     no_iters: int = 10,
+    no_taylor: int = 6,
+    no_squaring: int = 2,
     method: EckartMethod = EckartMethod.exp_kappa,
 ):
 
@@ -49,7 +51,11 @@ def eckart(
             xyz_ref -= com_ref
 
             if method == EckartMethod.exp_kappa:
-                set_no_iters_eckart(no_iters)
+                set_params(
+                    NO_ITERS_ECKART=no_iters,
+                    EXP_TAYLOR_ORDER=no_taylor,
+                    EXP_TAYLOR_SQUARING=no_squaring,
+                )
                 rot_mat = _eckart_expkappa(xyz, xyz_ref, masses_)
             elif method == EckartMethod.quaternion:
                 rot_mat = _eckart_quaternion(xyz, xyz_ref, masses_)
