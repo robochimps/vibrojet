@@ -556,6 +556,19 @@ def eckart_kappa_lowering(ctx, *ar, **kw):
 mlir.register_lowering(eckart_kappa_p, eckart_kappa_lowering)
 
 
+def eckart_kappa_batch_rule(args, dims):
+    xyz, xyz_ref, masses = args
+    dim1, dim2, dim3 = dims
+    assert dim1 == 0
+    assert dim2 is None
+    assert dim3 is None
+    out = jax.vmap(lambda x: eckart_kappa_impl(x, xyz_ref, masses))(xyz)
+    return out, 0
+
+
+batching.primitive_batchers[eckart_kappa_p] = eckart_kappa_batch_rule
+
+
 @jax.jit
 def eckart_kappa_taylor_rule(primals_in, series_in, **kw):
     xyz, xyz_ref, masses = primals_in
