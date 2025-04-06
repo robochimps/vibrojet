@@ -85,7 +85,7 @@ def eckart(q_ref: np.ndarray, masses: np.ndarray):
             masses_ = jnp.asarray(masses)
             com = masses_ @ xyz / jnp.sum(masses_)
             xyz -= com
-            xyz_ref = internal_to_cartesian(q_ref, **kwargs)
+            xyz_ref = internal_to_cartesian(jnp.asarray(q_ref), **kwargs)
             com_ref = masses_ @ xyz_ref / jnp.sum(masses_)
             xyz_ref -= com_ref
 
