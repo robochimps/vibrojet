@@ -24,8 +24,8 @@ def eckart(
     q_ref: np.ndarray,
     masses: np.ndarray,
     no_iters: int = 10,
-    no_taylor: int = 6,
-    no_squaring: int = 2,
+    no_taylor: int = 10,
+    no_squaring: int = 4,
     method: EckartMethod = EckartMethod.exp_kappa,
 ):
 
