@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vibrojet"
+version = "0.1.0"
+description = "Molecular rovibrational kinetic and potential energy operators using Taylor-mode automatic differentiation"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [{ name = "Robochimps", email = "andrey.yachmenev@robochimps.com" }]
+dependencies = ["jax>=0.5.3", "numpy>=2.2.4", "scipy>=1.15.2", "h5py>=3.12.1"]
+
+[tool.setuptools]
+packages = ["vibrojet"]
+
+[project.urls]
+Homepage = "https://github.com/robochimps/vibrojet"
