@@ -19,9 +19,11 @@ pip install --upgrade git+https://github.com/robochimps/vibrojet.git
 Quick example
 ----
 Taylor-series expansion of the rovibrational kinetic energy $G$-matrix for a triatomic molecule in the Eckart molecular frame, expressed in terms of the valence coordinates: two bond lengths $r_1$, $r_2$, and the bond angle $\alpha$:
+
 $$
 G_{\lambda,\mu}(r_1,r_2,\alpha)=\sum_\mathbf{t} g_\mathbf{t}^{(\lambda,\mu)}(r_1-r_1^{(eq)})^{t_1}(r_2-r_2^{(eq)})^{t_2}(\alpha-\alpha^{(eq)})^{t_3},
 $$
+
 where $\lambda,\mu=\{r_1,r_2,\alpha,\phi,\theta,\chi,X,Y,Z\}$ correspond to the $3N-6$ vibrational, three rotational, and three translational coordinate indices.
 ```py
 import itertools
