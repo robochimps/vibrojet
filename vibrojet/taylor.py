@@ -48,7 +48,7 @@ def _coefs_ij(i: List[int], j: List[int], d: int):
     return c
 
 
-def deriv(
+def _deriv(
     func: Callable[[jnp.ndarray], float],
     deriv_ind: List[int],
     x0: jnp.ndarray,
@@ -65,7 +65,7 @@ def deriv(
     Args:
         func (Callable[[jnp.ndarray], float]): The function to be differentiated.
             It should accept an array of coordinate values as input and return
-            a scalar value.
+            an array or scalar value.
         deriv_ind (List[int]): A multi-index specifying the order of differentiation along
             each coordinate.
         x0 (jnp.ndarray): The point at which the partial derivative is computed.
@@ -117,9 +117,9 @@ def deriv_list(
     https://doi.org/10.1090/S0025-5718-00-01120-0
 
     Args:
-        func (Callable[[jnp.ndarray], float]): The function to be differentiated.
+        func (Callable[[jnp.ndarray], jnp.ndarray]): The function to be differentiated.
             It should accept an array of coordinate values as input and return
-            a scalar value.
+            an array or scalar value.
         deriv_ind_list (List[List[int]]): A list of multi-indices specifying the order
             of differentiation along each coordinate.
         x0 (jnp.ndarray): The point at which the partial derivative is computed.
@@ -129,6 +129,7 @@ def deriv_list(
         array(float): Array of computed partial derivative values (of Taylor expansion coefficients)
             of `func` at `x0`.
     """
+    x0_arr = jnp.asarray(x0)
     ncoo = len(x0)
     deg_list = np.sort(np.unique(np.sum(deriv_ind_list, axis=-1)))
 
@@ -149,10 +150,10 @@ def deriv_list(
         def _jet(carry, i):
             _, (*_, res) = jet.jet(
                 func,
-                (x0,),
+                (x0_arr,),
                 (
                     (jnp.asarray(j, dtype=jnp.float64)[i],)
-                    + (jnp.zeros_like(x0),) * (d - 1),
+                    + (jnp.zeros_like(x0_arr),) * (d - 1),
                 ),
             )
             return 0, res
@@ -169,7 +170,7 @@ def deriv_list(
 
     for i in deriv_ind_list:
         if np.all(np.array(i) == 0):
-            c = func(x0)
+            c = func(x0_arr)
         else:
             d = sum(i)
             j = j_d[d]
@@ -182,7 +183,7 @@ def deriv_list(
     return jnp.array(coefs)
 
 
-def inv_taylor(pow_ind: np.ndarray, coefs: np.ndarray) -> np.ndarray:
+def _inv_taylor(pow_ind: np.ndarray, coefs: np.ndarray) -> np.ndarray:
     """Given a Taylor series expansion of a matrix or tensor, specified by multi-indices `pow_ind`
     and corresponding coefficients `coefs`, computes the Taylor series expansion of its inverse.
 
