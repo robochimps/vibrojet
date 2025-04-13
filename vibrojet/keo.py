@@ -145,7 +145,8 @@ def eckart(q_ref: np.ndarray, masses: np.ndarray):
 
 @functools.partial(jax.jit, static_argnums=2)
 def gmat(q, masses, internal_to_cartesian):
-    xyz_g = jax.jacfwd(internal_to_cartesian)(jnp.asarray(q))
+    # xyz_g = jax.jacfwd(internal_to_cartesian)(jnp.asarray(q))
+    xyz_g = jax.jacrev(internal_to_cartesian)(jnp.asarray(q))
     tvib = xyz_g
     xyz = internal_to_cartesian(jnp.asarray(q))
     trot = jnp.transpose(EPS @ xyz.T, (2, 0, 1))
@@ -399,12 +400,14 @@ def Detgmat(q, masses, internal_to_cartesian):
 
 @functools.partial(jax.jit, static_argnums=(2,))
 def dDetgmat(q, masses, internal_to_cartesian):
-    return jax.jacfwd(Detgmat)(q, masses, internal_to_cartesian)
+    return jax.jacrev(Detgmat)(q, masses, internal_to_cartesian)
+    # return jax.jacfwd(Detgmat)(q, masses, internal_to_cartesian)
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
 def hDetgmat(q, masses, internal_to_cartesian):
-    return jax.jacfwd(dDetgmat)(q, masses, internal_to_cartesian)
+    return jax.jacfwd(jax.jacrev(Detgmat))(q, masses, internal_to_cartesian)
+    # return jax.jacfwd(dDetgmat)(q, masses, internal_to_cartesian)
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
