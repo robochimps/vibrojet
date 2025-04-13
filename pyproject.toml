@@ -12,8 +12,12 @@ license = { file = "LICENSE" }
 authors = [{ name = "Robochimps", email = "andrey.yachmenev@robochimps.com" }]
 dependencies = ["jax>=0.5.3", "numpy>=2.2.4", "scipy>=1.15.2", "h5py>=3.12.1"]
 
-[tool.setuptools]
-packages = ["vibrojet"]
+# [tool.setuptools]
+# packages = ["vibrojet"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vibrojet*"]
 
 [project.urls]
 Homepage = "https://github.com/robochimps/vibrojet"
