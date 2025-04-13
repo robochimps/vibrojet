@@ -23,12 +23,14 @@ https://doi.org/10.1093/mnras/stw1133
 S = 31.97207070, H = 1.00782505
 """
 
+import jax
 from jax import config
 from jax import numpy as jnp
 
 config.update("jax_enable_x64", True)
 
 
+@jax.jit
 def poten(coords):
     params = [
         1.3359007e0,
