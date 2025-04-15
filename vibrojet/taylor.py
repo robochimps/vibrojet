@@ -6,6 +6,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.experimental import jet
 from scipy.special import binom, comb, factorial
+from functools import partial
+import time
 
 jax.config.update("jax_enable_x64", True)
 
@@ -101,7 +103,6 @@ def _deriv(
         res = res / jnp.prod(factorial(deriv_ind))
     return res
 
-
 def deriv_list(
     func: Callable[[jnp.ndarray], float],
     deriv_ind_list: List[List[int]],
@@ -129,13 +130,12 @@ def deriv_list(
         array(float): Array of computed partial derivative values (of Taylor expansion coefficients)
             of `func` at `x0`.
     """
-    x0_arr = jnp.asarray(x0)
-    ncoo = len(x0)
-    deg_list = np.sort(np.unique(np.sum(deriv_ind_list, axis=-1)))
+    x0_arr = jnp.asarray(x0) 
+    ncoo = len(x0)          
+    deg_list = np.sort(np.unique(np.sum(deriv_ind_list, axis=-1))) 
 
     f_d = {}
     j_d = {}
-
     for d in deg_list:
         j = np.array(
             [
@@ -157,11 +157,12 @@ def deriv_list(
                 ),
             )
             return 0, res
-
-        # _, f_d[d] = jax.lax.scan(_jet, 0, jnp.arange(len(j))) #  ... slow
-
+        # # _, f_d[d] = jax.lax.scan(_jet, 0, jnp.arange(len(j))) #  ... slow
+        
+        start_time = time.time()
         f_d[d] = jnp.array([_jet(0, i)[1] for i in jnp.arange(len(j))])
-
+        end_time = time.time()
+        print('Time for d=',d,':', np.round(end_time-start_time,2), 's')
         # f_d[d] = jax.vmap(lambda a, b: _jet(a, b)[1], in_axes=(None, 0))(
         #     0, jnp.arange(len(j))
         # )
