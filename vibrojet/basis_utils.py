@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.polynomial.hermite import hermder, hermgauss, hermval
 from scipy.special import factorial
+from itertools import product
 
 jax.config.update("jax_enable_x64", True)
 
@@ -126,7 +127,7 @@ class ContrBasis:
         hme = 0.5 * gme + vme
         n = len(self.bas_ind)
         e, v = np.linalg.eigh(hme.reshape(n, n))
-        print(e[0], e - e[0])
+        print(e[0], e[0:10] - e[0])
 
         # transform matrix elements to eigenbasis
 
@@ -195,25 +196,39 @@ def _d2me(coupl_bas, bas_m_ind, coo_ind):
             d2me[(icoo, jcoo)] = me
     return d2me
 
-
 def generate_prod_ind(
     indices: List[List[int]],
     select: Callable[[List[int]], bool] = lambda _: True,
     batch_size: int = None,
 ):
+    
     no_elem = np.array([len(elem) for elem in indices])
     tot_size = np.prod(no_elem)
-    if batch_size is None:
-        batch_size = tot_size
-    no_batches = (tot_size + batch_size - 1) // batch_size
+    list_ = indices[0]
+    for i in range(1, len(indices)):
+        list_ = list(product(list_,indices[i]))
+        list_ = [tuple(a) + (b,) if isinstance(a, tuple) else (a, b) for a, b in list_]
+        list_ = [elem for elem in list_ if select(elem)]
+    yield np.array(list_), np.array(list_).T #indices_out, #multi_ind
 
-    for ibatch in range(no_batches):
-        start_ind = ibatch * batch_size
-        end_ind = np.minimum(start_ind + batch_size, tot_size)
-        batch_ind = np.arange(start_ind, end_ind)
-        multi_ind = np.array(np.unravel_index(batch_ind, no_elem))
-        indices_out = np.array(
-            [indices[icoo][multi_ind[icoo, :]] for icoo in range(len(indices))]
-        ).T
-        select_ind = np.where(np.asarray([select(elem) for elem in indices_out]))
-        yield indices_out[select_ind], multi_ind[:, select_ind[0]]
+#def generate_prod_ind(
+#    indices: List[List[int]],
+#    select: Callable[[List[int]], bool] = lambda _: True,
+#    batch_size: int = None,
+#):
+#    no_elem = np.array([len(elem) for elem in indices])
+#    tot_size = np.prod(no_elem)
+#    if batch_size is None:
+#        batch_size = tot_size
+#    no_batches = (tot_size + batch_size - 1) // batch_size
+
+#    for ibatch in range(no_batches):
+#        start_ind = ibatch * batch_size
+#        end_ind = np.minimum(start_ind + batch_size, tot_size)
+#        batch_ind = np.arange(start_ind, end_ind)
+#        multi_ind = np.array(np.unravel_index(batch_ind, no_elem))
+#        indices_out = np.array(
+#            [indices[icoo][multi_ind[icoo, :]] for icoo in range(len(indices))]
+#        ).T
+#        select_ind = np.where(np.asarray([select(elem) for elem in indices_out]))
+#        yield indices_out[select_ind], multi_ind[:, select_ind[0]]
