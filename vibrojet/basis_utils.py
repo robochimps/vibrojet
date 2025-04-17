@@ -45,12 +45,28 @@ class HermiteBasis:
         r_pow = dr[:, None] ** np.array(deriv_ind)[None, :]
         psi = hermite(x, np.array(self.bas_ind))
         dpsi = hermite_deriv(x, np.array(self.bas_ind)) / dr_dx[:, None]
-        me = jnp.einsum("gi,gt,gj,g->tij", psi, r_pow, psi, w)
-        dme = jnp.einsum("gi,gt,gj,g->tij", psi, r_pow, dpsi, w)
-        d2me = jnp.einsum("gi,gt,gj,g->tij", dpsi, r_pow, dpsi, w)
-        self.me = me.reshape(len(deriv_ind), -1)
-        self.dme = {icoo: dme.reshape(len(deriv_ind), -1)}
-        self.d2me = {(icoo, icoo): d2me.reshape(len(deriv_ind), -1)}
+
+        me = jnp.einsum("gi,gt,gj,g->ijt", psi, r_pow, psi, w)
+        dme_r = jnp.einsum("gi,gt,gj,g->ijt", psi, r_pow, dpsi, w)
+        dme_l = -jnp.einsum("gi,gt,gj,g->jit", psi, r_pow, dpsi, w)
+        d2me = jnp.einsum("gi,gt,gj,g->ijt", dpsi, r_pow, dpsi, w)
+        self.me = me.reshape(-1, len(deriv_ind))
+        self.dme = {icoo: dme_r.reshape(-1, len(deriv_ind))}
+        self.dme_r = {icoo: dme_r.reshape(-1, len(deriv_ind))}
+        self.dme_l = {icoo: dme_l.reshape(-1, len(deriv_ind))}
+        self.d2me = {(icoo, icoo): d2me.reshape(-1, len(deriv_ind))}
+
+        # compute derivative matrix elements as
+        #    <d/dx x**i> = <x**(i-1)> + <x**i d/dx>
+        # deriv_ind_min_one = np.array(deriv_ind) - 1
+        # r_pow_min_one = jnp.where(
+        #     deriv_ind_min_one >= 0,
+        #     dr[:, None] ** deriv_ind_min_one[None, :],
+        #     dr[:, None] * np.zeros_like(deriv_ind_min_one)[None, :],
+        # )
+        # dme_l = jnp.einsum("gi,gt,gj,g->ijt", psi, r_pow_min_one, psi, w) + jnp.einsum(
+        #     "gi,gt,gj,g->ijt", psi, r_pow, dpsi, w
+        # )
 
 
 class ContrBasis:
@@ -61,6 +77,7 @@ class ContrBasis:
         bas_select: Callable[[List[int]], bool],
         Gmat_coefs: np.ndarray,
         poten_coefs: np.ndarray,
+        emax: float = 1e8,
     ):
         ind = [
             bas.bas_ind if ibas in coupl_ind else bas.bas_ind[0:1]
@@ -81,20 +98,34 @@ class ContrBasis:
             # flat_ind = [i * n + j for i in m_i for j in m_i]
             # m_ind_flat.append(flat_ind)
 
-        coupl_bas = [bas_list[ibas] for ibas in coupl_ind]
-        coupl_m_ind_flat = [m_ind_flat[ibas] for ibas in coupl_ind]
-
-        coo_ind = [coo_ind for bas in coupl_bas for coo_ind in bas.coo_ind]
+        coo_ind = [coo_ind for i in coupl_ind for coo_ind in bas_list[i].coo_ind]
         assert len(set(coo_ind)) == len(
             coo_ind
         ), "Input basis sets have overlapping coordinates"
 
-        self.bas_ind = np.arange(len(ind))
         self.coo_ind = coo_ind
+        nbas = len(ind)
 
-        me = _me(coupl_bas, coupl_m_ind_flat)
-        dme = _dme(coupl_bas, coupl_m_ind_flat, coo_ind)
-        d2me = _d2me(coupl_bas, coupl_m_ind_flat, coo_ind)
+        me = _me(
+            [bas_list[i] for i in coupl_ind],
+            [m_ind_flat[i] for i in coupl_ind],
+        )
+        dme_r = _dme(
+            [bas_list[i] for i in coupl_ind],
+            [m_ind_flat[i] for i in coupl_ind],
+            coo_ind,
+        )
+        dme_l = {
+            key: -val.reshape(nbas, nbas, -1)
+            .transpose(1, 0, 2)
+            .reshape(nbas * nbas, -1)
+            for key, val in dme_r.items()
+        }
+        d2me = _d2me(
+            [bas_list[i] for i in coupl_ind],
+            [m_ind_flat[i] for i in coupl_ind],
+            coo_ind,
+        )
 
         # define and solve reduced-mode eigenvalue problem
         # for basis sets that are involved in contraction
@@ -104,7 +135,7 @@ class ContrBasis:
         me0 = jnp.prod(
             jnp.asarray(
                 [
-                    bas.me[:, ind]
+                    bas.me[ind]
                     for i, (bas, ind) in enumerate(zip(bas_list, m_ind_flat))
                     if i not in coupl_ind
                 ]
@@ -113,39 +144,53 @@ class ContrBasis:
         )
 
         # potential matrix elements
-        me_ = me * me0
-        vme = me_.T @ poten_coefs
+        vme = (me * me0) @ poten_coefs
 
         # keo matrix elements
         gme = 0
         for icoo in self.coo_ind:
             for jcoo in self.coo_ind:
-                me_ = d2me[(icoo, jcoo)] * me0
-                gme += me_.T @ Gmat_coefs[:, icoo, jcoo]
+                gme += (d2me[(icoo, jcoo)] * me0) @ Gmat_coefs[:, icoo, jcoo]
 
         hme = 0.5 * gme + vme
-        n = len(self.bas_ind)
-        e, v = np.linalg.eigh(hme.reshape(n, n))
-        print(e[0], e - e[0])
+        e, v = jnp.linalg.eigh(hme.reshape(nbas, nbas))
+        v_ind = jnp.where(e <= emax)[0]
+        v = v[:, v_ind]
+        self.enr = e[v_ind]
+        nstates = len(v_ind)
+        self.bas_ind = np.arange(nstates)
 
         # transform matrix elements to eigenbasis
 
-        n = v.shape[0]
-        nt = me.shape[0]
-        self.me = (v.T @ me.reshape(-1, n, n) @ v).reshape(nt, -1)
-        self.dme = {
-            key: (v.T @ val.reshape(-1, n, n) @ v).reshape(nt, -1)
-            for key, val in dme.items()
+        self.me = jnp.einsum(
+            "pi,pqt,qj->ijt", v, me.reshape(nbas, nbas, -1), v
+        ).reshape(nstates * nstates, -1)
+
+        self.dme_r = {
+            key: jnp.einsum(
+                "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
+            ).reshape(nstates * nstates, -1)
+            for key, val in dme_r.items()
         }
+
+        self.dme_l = {
+            key: jnp.einsum(
+                "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
+            ).reshape(nstates * nstates, -1)
+            for key, val in dme_l.items()
+        }
+
         self.d2me = {
-            key: (v.T @ val.reshape(-1, n, n) @ v).reshape(nt, -1)
+            key: jnp.einsum(
+                "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
+            ).reshape(nstates * nstates, -1)
             for key, val in d2me.items()
         }
 
 
 def _me(coupl_bas, bas_m_ind):
     me = jnp.prod(
-        jnp.asarray([bas.me[:, ind] for bas, ind in zip(coupl_bas, bas_m_ind)]),
+        jnp.asarray([bas.me[ind] for bas, ind in zip(coupl_bas, bas_m_ind)]),
         axis=0,
     )
     return me
@@ -157,7 +202,7 @@ def _dme(coupl_bas, bas_m_ind, coo_ind):
         me = jnp.prod(
             jnp.asarray(
                 [
-                    bas.dme[icoo][:, ind] if icoo in bas.coo_ind else bas.me[:, ind]
+                    bas.dme_r[icoo][ind] if icoo in bas.coo_ind else bas.me[ind]
                     for bas, ind in zip(coupl_bas, bas_m_ind)
                 ]
             ),
@@ -175,15 +220,15 @@ def _d2me(coupl_bas, bas_m_ind, coo_ind):
                 jnp.asarray(
                     [
                         (
-                            bas.d2me[(icoo, jcoo)][:, ind]
+                            bas.d2me[(icoo, jcoo)][ind]
                             if icoo in bas.coo_ind and jcoo in bas.coo_ind
                             else (
-                                -bas.dme[icoo][:, ind]
+                                bas.dme_l[icoo][ind]
                                 if icoo in bas.coo_ind
                                 else (
-                                    bas.dme[jcoo][:, ind]
+                                    bas.dme_r[jcoo][ind]
                                     if jcoo in bas.coo_ind
-                                    else bas.me[:, ind]
+                                    else bas.me[ind]
                                 )
                             )
                         )
