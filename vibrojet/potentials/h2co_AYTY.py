@@ -23,13 +23,14 @@ https://doi.org/10.1093/mnras/stv091
 9509.23,  9597.97,  9659.65,  9708.45,  9713.89.
 """
 
+from io import StringIO
+
 import jax
 import numpy as np
 from jax import config
 from jax import numpy as jnp
 
 config.update("jax_enable_x64", True)
-from io import StringIO
 
 _params_eq = """
     f0CO   0 0 0 0 0 0	1.2
