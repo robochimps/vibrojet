@@ -390,11 +390,11 @@ def poten(q):
 def pot_v2(coro, y1, y2, y3, y4, y5, force):
     sqrt3 = jnp.sqrt(3)
     coro2, coro3, coro4, coro5, coro6, coro7 = [coro**i for i in (2, 3, 4, 5, 6, 7)]
-    y1_2 = [y1**i for i in (2,)]
-    y2_2 = [y2**i for i in (2,)]
-    y3_2 = [y3**i for i in (2,)]
-    y4_2 = [y4**i for i in (2,)]
-    y5_2 = [y5**i for i in (2,)]
+    y1_2 = y1**2
+    y2_2 = y2**2
+    y3_2 = y3**2
+    y4_2 = y4**2
+    y5_2 = y5**2
     (
         ve,
         f1a,
@@ -481,7 +481,7 @@ def pot_v3(coro, y1, y2, y3, y4, y5, force):
     y2_2, y2_3 = [y2**i for i in (2, 3)]
     y3_2, y3_3 = [y3**i for i in (2, 3)]
     y4_2, y4_3 = [y4**i for i in (2, 3)]
-    y5_2 = [y5**i for i in (2,)]
+    y5_2 = y5**2
     (
         f0a111,
         f1a111,
@@ -574,7 +574,7 @@ def pot_v3(coro, y1, y2, y3, y4, y5, force):
 
 def pot_v4(coro, y1, y2, y3, y4, y5, force):
     sqrt3 = jnp.sqrt(3)
-    coro2 = [coro**i for i in (2,)]
+    coro2 = coro**2
     y1_2, y1_3, y1_4 = [y1**i for i in (2, 3, 4)]
     y2_2, y2_3, y2_4 = [y2**i for i in (2, 3, 4)]
     y3_2, y3_3, y3_4 = [y3**i for i in (2, 3, 4)]
@@ -761,7 +761,7 @@ def pot_v4(coro, y1, y2, y3, y4, y5, force):
 
 def pot_v5(coro, y1, y2, y3, y4, y5, force):
     sqrt3 = jnp.sqrt(3)
-    coro2 = [coro**i for i in (2,)]
+    coro2 = coro**2
     y1_2, y1_3, y1_4, y1_5 = [y1**i for i in (2, 3, 4, 5)]
     y2_2, y2_3, y2_4, y2_5 = [y2**i for i in (2, 3, 4, 5)]
     y3_2, y3_3, y3_4, y3_5 = [y3**i for i in (2, 3, 4, 5)]
@@ -1103,7 +1103,7 @@ def pot_v5(coro, y1, y2, y3, y4, y5, force):
 
 def pot_v6(coro, y1, y2, y3, y4, y5, force):
     sqrt3 = jnp.sqrt(3)
-    coro2 = [coro**i for i in (2,)]
+    coro2 = coro**2
     y1_2, y1_3, y1_4, y1_5, y1_6 = [y1**i for i in (2, 3, 4, 5, 6)]
     y2_2, y2_3, y2_4, y2_5, y2_6 = [y2**i for i in (2, 3, 4, 5, 6)]
     y3_2, y3_3, y3_4, y3_5, y3_6 = [y3**i for i in (2, 3, 4, 5, 6)]
