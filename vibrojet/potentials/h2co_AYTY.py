@@ -183,25 +183,30 @@ ind = np.concatenate((ind1, ind2), axis=0)
 coefs = np.concatenate((coefs1, coefs2), axis=0)
 
 
-@jax.jit
-def poten(q):
-    r0, r1, r2, a1, a2, tau = q.T
-
-    costau = jnp.cos(tau) + 1
-    r0eq = jnp.sum(
+def mep(cos_tau):
+    costau = cos_tau + 1
+    r0 = jnp.sum(
         jnp.array([c * costau**i for c, i in zip(coefs_eq[:5], ind_eq[:5, 0])]),
         axis=0,
     )
-    r1eq = jnp.sum(
+    r1 = jnp.sum(
         jnp.array([c * costau**i for c, i in zip(coefs_eq[5:10], ind_eq[5:10, 1])]),
         axis=0,
     )
-    r2eq = r1eq
-    a1eq = jnp.sum(
+    r2 = r1
+    a1 = jnp.sum(
         jnp.array([c * costau**i for c, i in zip(coefs_eq[10:15], ind_eq[10:15, 3])]),
         axis=0,
     )
-    a2eq = a1eq
+    a2 = a1
+    return jnp.array([r0, r1, r2, a1, a2, cos_tau])
+
+
+def poten(q):
+    r0, r1, r2, a1, a2, cos_tau = q.T
+
+    r0eq, r1eq, r2eq, a1eq, a2eq, cos_tau_eq = mep(cos_tau)
+    costau = cos_tau + 1
 
     y = jnp.array(
         [
