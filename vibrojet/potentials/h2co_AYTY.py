@@ -183,7 +183,11 @@ ind = np.concatenate((ind1, ind2), axis=0)
 coefs = np.concatenate((coefs1, coefs2), axis=0)
 
 
-def mep(cos_tau):
+def mep(tau_coo, if_costau: bool = False):
+    if if_costau:
+        cos_tau = tau_coo
+    else:
+        cos_tau = jnp.cos(tau_coo)
     costau = cos_tau + 1
     r0 = jnp.sum(
         jnp.array([c * costau**i for c, i in zip(coefs_eq[:5], ind_eq[:5, 0])]),
@@ -199,13 +203,18 @@ def mep(cos_tau):
         axis=0,
     )
     a2 = a1
-    return jnp.array([r0, r1, r2, a1, a2, cos_tau])
+    return jnp.array([r0, r1, r2, a1, a2, tau_coo])
 
 
-def poten(q):
-    r0, r1, r2, a1, a2, cos_tau = q.T
+def poten(q, if_costau: bool = False):
+    r0, r1, r2, a1, a2, tau_coo = q.T
 
-    r0eq, r1eq, r2eq, a1eq, a2eq, cos_tau_eq = mep(cos_tau)
+    if if_costau:
+        cos_tau = tau_coo
+    else:
+        cos_tau = jnp.cos(tau_coo)
+
+    r0eq, r1eq, r2eq, a1eq, a2eq, _ = mep(tau_coo, if_costau)
     costau = cos_tau + 1
 
     y = jnp.array(
