@@ -51,7 +51,7 @@ def inv_impl(a, **kw):
 inv_p.def_impl(inv_impl)
 
 
-@jax.jit
+# @jax.jit
 def inv_jvp(primals, tangents, **kw):
     (a,) = primals
     (da,) = tangents
@@ -97,7 +97,7 @@ def inv_batch_rule(args, dims):
 batching.primitive_batchers[inv_p] = inv_batch_rule
 
 
-@jax.jit
+# @jax.jit
 def _inverse_taylor_rule(primals_in, series_in, **kw):
     (x,) = primals_in
     (x_terms,) = series_in
@@ -143,7 +143,7 @@ eigh_p.multiple_results = True
 eigh_p.def_impl(eigh_impl)
 
 
-@jax.jit
+# @jax.jit
 def eigh_jvp(primals, tangents, **kw):
     (a,) = primals
     (da,) = tangents
@@ -190,7 +190,7 @@ def eigh_batch_rule(args, dims):
 batching.primitive_batchers[eigh_p] = eigh_batch_rule
 
 
-@jax.jit
+# @jax.jit
 def _eigh_taylor_rule(primals_in, series_in, **kw):
     (x,) = primals_in
     (x_terms,) = series_in
@@ -266,7 +266,7 @@ lu_p.def_impl(lu_impl)
 lu_p.multiple_results = True
 
 
-@jax.jit
+# @jax.jit
 def lu_jvp(primals, tangents, **kw):
     (a,) = primals
     (da,) = tangents
@@ -315,7 +315,7 @@ def lu_batch_rule(args, dims):
 batching.primitive_batchers[lu_p] = lu_batch_rule
 
 
-@jax.jit
+# @jax.jit
 def _lu_taylor_rule(primals_in, series_in, **kw):
     (x,) = primals_in
     (x_terms,) = series_in
@@ -404,7 +404,7 @@ def acos_batch_rule(args, dims):
 batching.primitive_batchers[acos_p] = acos_batch_rule
 
 
-@jax.jit
+# @jax.jit
 def _acos_taylor_rule(primals_in, series_in, **kw):
     (x,) = primals_in
     (series,) = series_in
@@ -498,7 +498,7 @@ eckart_kappa_p.def_impl(eckart_kappa_impl)
 eckart_kappa_p.multiple_results = False
 
 
-@jax.jit
+# @jax.jit
 def eckart_kappa_jvp(primals, tangents, **kw):
     xyz, xyz_ref, masses = primals
     dxyz, dxyz_ref, dmasses = tangents
@@ -569,7 +569,7 @@ def eckart_kappa_batch_rule(args, dims):
 batching.primitive_batchers[eckart_kappa_p] = eckart_kappa_batch_rule
 
 
-@jax.jit
+# @jax.jit
 def eckart_kappa_taylor_rule(primals_in, series_in, **kw):
     xyz, xyz_ref, masses = primals_in
     dxyz, dxyz_ref, dmasses = series_in

@@ -50,60 +50,6 @@ def _coefs_ij(i: List[int], j: List[int], d: int):
     return c
 
 
-def _deriv(
-    func: Callable[[jnp.ndarray], float],
-    deriv_ind: List[int],
-    x0: jnp.ndarray,
-    if_taylor: bool = False,
-) -> float:
-    """Computes partial derivative of a function `func` at a point `x0`
-    given by the derivative multi-index `deriv_ind`.
-
-    The function uses interpolation formula in Eq. (13) of Andreas Griewank,
-    Jean Utke and Andrea Walther, "Evaluating higher derivative tensors by forward
-    propagation of univariate Taylor series", Math. Comp. 69 (2000), 1117-1130,
-    https://doi.org/10.1090/S0025-5718-00-01120-0
-
-    Args:
-        func (Callable[[jnp.ndarray], float]): The function to be differentiated.
-            It should accept an array of coordinate values as input and return
-            an array or scalar value.
-        deriv_ind (List[int]): A multi-index specifying the order of differentiation along
-            each coordinate.
-        x0 (jnp.ndarray): The point at which the partial derivative is computed.
-        if_taylor (bool): If True, returns Taylor expansion coefficients.
-
-    Returns:
-        float: The computed partial derivative value (of Taylor expansion coefficient)
-            of `func` at `x0`.
-    """
-    if np.all(np.array(deriv_ind) == 0):
-        return func(x0)
-
-    k, c = _coefs_i(deriv_ind)
-    sum_i = sum(deriv_ind)
-
-    @jax.jit
-    def _sum(carry, i):
-        _, (*_, res) = jet.jet(
-            func,
-            (x0,),
-            (
-                (jnp.asarray(k, dtype=jnp.float64)[i],)
-                + (jnp.zeros_like(x0),) * (sum_i - 1),
-            ),
-        )
-        return carry + res * c[i], 0
-
-    # ... need to replace scan with simple sum, works faster
-    res, _ = _sum(0, 0)
-    res, _ = jax.lax.scan(_sum, res, jnp.arange(1, len(k)))
-    res = res / factorial(sum_i)
-    if if_taylor:
-        res = res / jnp.prod(factorial(deriv_ind))
-    return res
-
-
 def deriv_list(
     func: Callable[[jnp.ndarray], float],
     deriv_ind_list: List[List[int]],
@@ -131,6 +77,20 @@ def deriv_list(
         array(float): Array of computed partial derivative values (of Taylor expansion coefficients)
             of `func` at `x0`.
     """
+
+    # @partial(jax.jit, static_argnums=1)
+    # @partial(jax.vmap, in_axes=(0, None))
+    def _jet(j, d):
+        _, (*_, res) = jet.jet(
+            func,
+            (x0_arr,),
+            (
+                (jnp.asarray(j, dtype=jnp.float64),)
+                + (jnp.zeros_like(x0_arr),) * (d - 1),
+            ),
+        )
+        return res
+
     x0_arr = jnp.asarray(x0)
     ncoo = len(x0)
     deg_list = np.sort(np.unique(np.sum(deriv_ind_list, axis=-1)))
@@ -147,27 +107,13 @@ def deriv_list(
         )
         j_d[d] = j
 
-        @jax.jit
-        def _jet(carry, i):
-            _, (*_, res) = jet.jet(
-                func,
-                (x0_arr,),
-                (
-                    (jnp.asarray(j, dtype=jnp.float64)[i],)
-                    + (jnp.zeros_like(x0_arr),) * (d - 1),
-                ),
-            )
-            return 0, res
-
-        # # _, f_d[d] = jax.lax.scan(_jet, 0, jnp.arange(len(j))) #  ... slow
-
         start_time = time.time()
-        f_d[d] = jnp.array([_jet(0, i)[1] for i in jnp.arange(len(j))])
+
+        f_d[d] = jnp.array([_jet(j_, d) for j_ in j])
+        # f_d[d] = _jet(j, d)
+
         end_time = time.time()
         print("Time for d=", d, ":", np.round(end_time - start_time, 2), "s")
-        # f_d[d] = jax.vmap(lambda a, b: _jet(a, b)[1], in_axes=(None, 0))(
-        #     0, jnp.arange(len(j))
-        # )
 
     coefs = []
 
