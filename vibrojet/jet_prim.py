@@ -498,7 +498,7 @@ eckart_kappa_p.def_impl(eckart_kappa_impl)
 eckart_kappa_p.multiple_results = False
 
 
-# @jax.jit
+@jax.jit
 def eckart_kappa_jvp(primals, tangents, **kw):
     xyz, xyz_ref, masses = primals
     dxyz, dxyz_ref, dmasses = tangents
@@ -569,7 +569,7 @@ def eckart_kappa_batch_rule(args, dims):
 batching.primitive_batchers[eckart_kappa_p] = eckart_kappa_batch_rule
 
 
-# @jax.jit
+@jax.jit
 def eckart_kappa_taylor_rule(primals_in, series_in, **kw):
     xyz, xyz_ref, masses = primals_in
     dxyz, dxyz_ref, dmasses = series_in
