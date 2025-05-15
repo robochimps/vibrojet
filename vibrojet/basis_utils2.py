@@ -36,6 +36,8 @@ class HermiteBasis:
         nbas: int,
         npoints: int,
         x_to_r: Callable[[np.ndarray], jnp.ndarray],
+        r_to_y_pes: Callable[[np.ndarray], jnp.ndarray],
+        r_to_y_gmat: Callable[[np.ndarray], jnp.ndarray],
         r0: float,
         deriv_ind: List[int],
     ):
@@ -43,17 +45,28 @@ class HermiteBasis:
         self.coo_ind = (icoo,)
         x, w = hermgauss(npoints)
         w /= np.exp(-(x**2))
+        
         r = x_to_r(x)
         dr_dx = jax.vmap(jax.grad(x_to_r), in_axes=0)(x)
         dr = r - r0
         r_pow = dr[:, None] ** np.array(deriv_ind)[None, :]
+        
+        y_pes = r_to_y_pes(r) 
+        y_pow_pes = y_pes[:, None] ** np.array(deriv_ind)[None, :] 
+
+        y_gmat = r_to_y_gmat(r) 
+        y_pow_gmat = y_gmat[:, None] ** np.array(deriv_ind)[None, :] 
+        
         psi = hermite(x, np.array(self.bas_ind))
         dpsi = hermite_deriv(x, np.array(self.bas_ind)) / dr_dx[:, None]
 
-        me = jnp.einsum("gi,gt,gj,g->ijt", psi, r_pow, psi, w)
-        dme_r = jnp.einsum("gi,gt,gj,g->ijt", psi, r_pow, dpsi, w)
-        dme_l = -jnp.einsum("gi,gt,gj,g->jit", psi, r_pow, dpsi, w)
-        d2me = -jnp.einsum("gi,gt,gj,g->ijt", dpsi, r_pow, dpsi, w)
+        me_pes = jnp.einsum("gi,gt,gj,g->ijt", psi, y_pow_pes, psi, w)
+        me = jnp.einsum("gi,gt,gj,g->ijt", psi, y_pow_gmat, psi, w)
+        dme_r = jnp.einsum("gi,gt,gj,g->ijt", psi, y_pow_gmat, dpsi, w)
+        dme_l = -jnp.einsum("gi,gt,gj,g->jit", psi, y_pow_gmat, dpsi, w)
+        d2me = -jnp.einsum("gi,gt,gj,g->ijt", dpsi, y_pow_gmat, dpsi, w)
+        
+        self.me_pes = me_pes.reshape(-1, len(deriv_ind))
         self.me = me.reshape(-1, len(deriv_ind))
         self.dme = {icoo: dme_r.reshape(-1, len(deriv_ind))}
         self.dme_r = {icoo: dme_r.reshape(-1, len(deriv_ind))}
@@ -103,29 +116,44 @@ class AssociateLegendreBasis:
         nbas: int,
         npoints: int,
         x_to_r: Callable[[np.ndarray], jnp.ndarray],
+        r_to_y_pes: Callable[[np.ndarray], jnp.ndarray],
+        r_to_y_gmat: Callable[[np.ndarray], jnp.ndarray],
         r0: float,
         deriv_ind: List[int],
         m = 0, #Default m value
     ):
+
         self.bas_ind = np.arange(nbas)
         self.coo_ind = (icoo,)
         x, w = leggauss2(npoints)
+        
         r = x_to_r(x)
         dr_dx = jax.vmap(jax.grad(x_to_r), in_axes=0)(x)
         dr = r - r0
         r_pow = dr[:, None] ** np.array(deriv_ind)[None, :]
+        
+        y_pes = r_to_y_pes(r) 
+        y_pow_pes = y_pes[:, None] ** np.array(deriv_ind)[None, :] 
+
+        y_gmat = r_to_y_gmat(r) 
+        y_pow_gmat = y_gmat[:, None] ** np.array(deriv_ind)[None, :] 
+        
         psi = legendre(x, np.array(self.bas_ind), m)
         dpsi = legendre_deriv(x, np.array(self.bas_ind), m) / dr_dx[:, None]
 
-        me = jnp.einsum("gi,gt,gj,g->ijt", psi, r_pow, psi, w)
-        dme_r = jnp.einsum("gi,gt,gj,g->ijt", psi, r_pow, dpsi, w)
-        dme_l = -jnp.einsum("gi,gt,gj,g->jit", psi, r_pow, dpsi, w)
-        d2me = -jnp.einsum("gi,gt,gj,g->ijt", dpsi, r_pow, dpsi, w)
+        me_pes = jnp.einsum("gi,gt,gj,g->ijt", psi, y_pow_pes, psi, w)
+        me = jnp.einsum("gi,gt,gj,g->ijt", psi, y_pow_gmat, psi, w)
+        dme_r = jnp.einsum("gi,gt,gj,g->ijt", psi, y_pow_gmat, dpsi, w)
+        dme_l = -jnp.einsum("gi,gt,gj,g->jit", psi, y_pow_gmat, dpsi, w)
+        d2me = -jnp.einsum("gi,gt,gj,g->ijt", dpsi, y_pow_gmat, dpsi, w)
+        
+        self.me_pes = me_pes.reshape(-1, len(deriv_ind))
         self.me = me.reshape(-1, len(deriv_ind))
         self.dme = {icoo: dme_r.reshape(-1, len(deriv_ind))}
         self.dme_r = {icoo: dme_r.reshape(-1, len(deriv_ind))}
         self.dme_l = {icoo: dme_l.reshape(-1, len(deriv_ind))}
         self.d2me = {(icoo, icoo): d2me.reshape(-1, len(deriv_ind))}
+
 
 def fourier(x, n):
     f = np.sin(np.ceil(n[None, :]/2) * x[:,None] + np.pi/2 * np.mod(n[None,:] + 1, 2))/ np.sqrt(np.pi)
@@ -148,23 +176,36 @@ class FourierBasis:
         nbas: int,
         npoints: int,
         x_to_r: Callable[[np.ndarray], jnp.ndarray],
+        r_to_y_pes: Callable[[np.ndarray], jnp.ndarray],
+        r_to_y_gmat: Callable[[np.ndarray], jnp.ndarray],
         r0: float,
         deriv_ind: List[int],
     ):
         self.bas_ind = np.arange(nbas)
         self.coo_ind = (icoo,)
         x, w = fourgauss(npoints)
+        
         r = x_to_r(x)
         dr_dx = jax.vmap(jax.grad(x_to_r), in_axes=0)(x)
         dr = r - r0
         r_pow = dr[:, None] ** np.array(deriv_ind)[None, :]
+        
+        y_pes = r_to_y_pes(r) 
+        y_pow_pes = y_pes[:, None] ** np.array(deriv_ind)[None, :] 
+
+        y_gmat = r_to_y_gmat(r) 
+        y_pow_gmat = y_gmat[:, None] ** np.array(deriv_ind)[None, :] 
+        
         psi = fourier(x, np.array(self.bas_ind))
         dpsi = fourier_deriv(x, np.array(self.bas_ind)) / dr_dx[:, None]
 
-        me = jnp.einsum("gi,gt,gj,g->ijt", psi, r_pow, psi, w)
-        dme_r = jnp.einsum("gi,gt,gj,g->ijt", psi, r_pow, dpsi, w)
-        dme_l = -jnp.einsum("gi,gt,gj,g->jit", psi, r_pow, dpsi, w)
-        d2me = -jnp.einsum("gi,gt,gj,g->ijt", dpsi, r_pow, dpsi, w)
+        me_pes = jnp.einsum("gi,gt,gj,g->ijt", psi, y_pow_pes, psi, w)
+        me = jnp.einsum("gi,gt,gj,g->ijt", psi, y_pow_gmat, psi, w)
+        dme_r = jnp.einsum("gi,gt,gj,g->ijt", psi, y_pow_gmat, dpsi, w)
+        dme_l = -jnp.einsum("gi,gt,gj,g->jit", psi, y_pow_gmat, dpsi, w)
+        d2me = -jnp.einsum("gi,gt,gj,g->ijt", dpsi, y_pow_gmat, dpsi, w)
+        
+        self.me_pes = me_pes.reshape(-1, len(deriv_ind))
         self.me = me.reshape(-1, len(deriv_ind))
         self.dme = {icoo: dme_r.reshape(-1, len(deriv_ind))}
         self.dme_r = {icoo: dme_r.reshape(-1, len(deriv_ind))}
@@ -227,7 +268,7 @@ class ContrBasis:
             for z in range(len(m_ind_flat)):
                 m_ind_flat_batch.append(m_ind_flat[z][index_batch])
             
-            me = _me(
+            me_pes = _me_pes(
                 [bas_list[i] for i in coupl_ind],
                 [m_ind_flat_batch[i] for i in coupl_ind],
             )
@@ -237,6 +278,17 @@ class ContrBasis:
     
             # matrix elements of expansion terms for basis sets
             # that are not involved in contraction
+            me0_pes = jnp.prod(
+                jnp.asarray(
+                    [
+                        bas.me_pes[ind]
+                        for i, (bas, ind) in enumerate(zip(bas_list, m_ind_flat_batch))
+                        if i not in coupl_ind
+                    ]
+                ),
+                axis=0,
+            )
+            
             me0 = jnp.prod(
                 jnp.asarray(
                     [
@@ -249,7 +301,7 @@ class ContrBasis:
             )
     
             # potential matrix elements
-            vme[index_batch] = (me * me0) @ poten_coefs
+            vme[index_batch] = (me_pes * me0_pes) @ poten_coefs
     
             # keo matrix elements
             # gme = 0
@@ -271,7 +323,7 @@ class ContrBasis:
 
         if store_int:    
             print('Saving integrals...')
-            me_accum,dme_r_accum,dme_l_accum,d2me_accum = [],{},{},{}
+            me_pes_accum,me_accum,dme_r_accum,dme_l_accum,d2me_accum = [],[],{},{},{}
         
             for ibatch in range(n_batches):
                 start_time = time.time()
@@ -284,6 +336,11 @@ class ContrBasis:
                 m_ind_flat_batch = [m[index_batch] for m in m_ind_flat]
         
                 # Compute batch contributions
+                me_pes_batch = _me_pes(
+                    [bas_list[i] for i in coupl_ind],
+                    [m_ind_flat_batch[i] for i in coupl_ind],
+                )
+                
                 me_batch = _me(
                     [bas_list[i] for i in coupl_ind],
                     [m_ind_flat_batch[i] for i in coupl_ind],
@@ -306,6 +363,7 @@ class ContrBasis:
                 )
         
                 # Accumulate results
+                me_pes_accum.append(me_pes_batch)
                 me_accum.append(me_batch)
                 for key, val in dme_r_batch.items():
                     dme_r_accum.setdefault(key, []).append(val)
@@ -319,6 +377,7 @@ class ContrBasis:
 
             # Concatenate batches
             me = jnp.concatenate(me_accum, axis=0)  # or stack, depending on shape
+            me_pes = jnp.concatenate(me_pes_accum, axis=0)  # or stack, depending on shape
             dme_r_full = {k: jnp.concatenate(v, axis=0) for k, v in dme_r_accum.items()}
             dme_l_full = {k: jnp.concatenate(v, axis=0) for k, v in dme_l_accum.items()}
             d2me_full = {k: jnp.concatenate(v, axis=0) for k, v in d2me_accum.items()}
@@ -327,6 +386,10 @@ class ContrBasis:
             nstates = len(v_ind)
             self.bas_ind = np.arange(nstates)
 
+            self.me_pes = jnp.einsum(
+                "pi,pqt,qj->ijt", v, me_pes.reshape(nbas, nbas, -1), v
+            ).reshape(nstates * nstates, -1)
+            
             self.me = jnp.einsum(
                 "pi,pqt,qj->ijt", v, me.reshape(nbas, nbas, -1), v
             ).reshape(nstates * nstates, -1)
@@ -371,6 +434,13 @@ def compute_gme(bas_list, m_ind_flat, coupl_ind, coo_ind, me0, Gmat_coefs):
                 val_prod = val if val_prod is None else val_prod * val
             gme += (val_prod * me0) @ Gmat_coefs[:, icoo, jcoo]
     return gme
+
+def _me_pes(coupl_bas, bas_m_ind):
+    me = None
+    for bas, ind in zip(coupl_bas, bas_m_ind):
+        val = bas.me_pes[ind]
+        me = val if me is None else me * val
+    return me
 
 def _me(coupl_bas, bas_m_ind):
     me = None
