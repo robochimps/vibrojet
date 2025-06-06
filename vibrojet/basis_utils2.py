@@ -260,16 +260,18 @@ class ContrBasis:
 
         vme = np.zeros(nbas**2)
         gme = np.zeros(nbas**2)
+        coupl_bas_list = [bas_list[i] for i in coupl_ind]
+        
         for ibatch in range(n_batches):
             start_time = time.time()
-            print('batch no:',ibatch,' out of:',int(np.ceil(nbas**2 / batch_size_)))
-            index_batch = np.arange(ibatch * batch_size_, np.min([(ibatch+1) * batch_size_, nbas**2]))
+            print('batch no:',ibatch,' out of:',int(jnp.ceil(nbas**2 / batch_size_)))
+            index_batch = jnp.arange(ibatch * batch_size_, np.min([(ibatch+1) * batch_size_, nbas**2]))
             m_ind_flat_batch = []
             for z in range(len(m_ind_flat)):
                 m_ind_flat_batch.append(m_ind_flat[z][index_batch])
             
             me_pes = _me_pes(
-                [bas_list[i] for i in coupl_ind],
+                coupl_bas_list,
                 [m_ind_flat_batch[i] for i in coupl_ind],
             )
     
@@ -316,102 +318,75 @@ class ContrBasis:
         e, v = jnp.linalg.eigh(hme.reshape(nbas, nbas))
         print(e[0:10])
         v_ind = jnp.where(e - e[0] <= emax)[0]
+        nstates = len(v_ind)
         v = v[:, v_ind]
         self.enr = e[v_ind]
         
         # transform matrix elements to eigenbasis
-
         if store_int:    
-            print('Saving integrals...')
-            me_pes_accum,me_accum,dme_r_accum,dme_l_accum,d2me_accum = [],[],{},{},{}
+            print("Saving integrals...")
         
+            nbas = len(v)
+            batch_size_ = nbas**2 if batch_size == 0 else batch_size
+            n_batches = int(np.ceil(nbas**2 / batch_size_))
+        
+            me = jnp.zeros((nstates * nstates, len(poten_coefs)))
+            me_pes = jnp.zeros_like(me)
+            dme_r = None
+            dme_l = None
+            d2me = None
+            
+            m_ind_flat = [jnp.asarray(m) for m in m_ind_flat]
+            input_bas = [bas_list[i] for i in coupl_ind]
+            
             for ibatch in range(n_batches):
                 start_time = time.time()
                 print(f'batch no: {ibatch} out of: {n_batches}')
-                index_batch = np.arange(
-                    ibatch * batch_size_,
-                    min((ibatch + 1) * batch_size_, nbas**2)
-                )
         
+                index_batch = np.arange(ibatch * batch_size_, min((ibatch + 1) * batch_size_, nbas**2))
+        
+                index_bra = index_batch // nbas
+                index_ket = index_batch % nbas
+                v_bra = v[index_bra, :]
+                v_ket = v[index_ket, :]
+                v_braket = jnp.einsum('qi,qj->qij', v_bra, v_ket).reshape((len(index_batch), -1))
+
                 m_ind_flat_batch = [m[index_batch] for m in m_ind_flat]
-        
-                # Compute batch contributions
-                me_pes_batch = _me_pes(
-                    [bas_list[i] for i in coupl_ind],
-                    [m_ind_flat_batch[i] for i in coupl_ind],
-                )
-                
-                me_batch = _me(
-                    [bas_list[i] for i in coupl_ind],
-                    [m_ind_flat_batch[i] for i in coupl_ind],
-                )
-                
-                dme_r_batch = _dme_r(
-                    [bas_list[i] for i in coupl_ind],
-                    [m_ind_flat_batch[i] for i in coupl_ind],
-                    coo_ind,
-                )
-                dme_l_batch = _dme_l(
-                    [bas_list[i] for i in coupl_ind],
-                    [m_ind_flat_batch[i] for i in coupl_ind],
-                    coo_ind,
-                )
-                d2me_batch = _d2me(
-                    [bas_list[i] for i in coupl_ind],
-                    [m_ind_flat_batch[i] for i in coupl_ind],
-                    coo_ind,
-                )
-        
-                # Accumulate results
-                me_pes_accum.append(me_pes_batch)
-                me_accum.append(me_batch)
-                for key, val in dme_r_batch.items():
-                    dme_r_accum.setdefault(key, []).append(val)
-                for key, val in dme_l_batch.items():
-                    dme_l_accum.setdefault(key, []).append(val)
-                for key, val in d2me_batch.items():
-                    d2me_accum.setdefault(key, []).append(val)
+                input_m_ind = [m_ind_flat_batch[i] for i in coupl_ind]
 
+                me_batch = _me(input_bas, input_m_ind)
+                me_pes_batch = _me_pes(input_bas, input_m_ind)
+                dme_r_batch = _dme_r(input_bas, input_m_ind, coo_ind)
+                dme_l_batch = _dme_l(input_bas, input_m_ind, coo_ind)
+                d2me_batch = _d2me(input_bas, input_m_ind, coo_ind)
+        
+                # Contract into (nstates², n_terms)
+                me += jnp.einsum("qi,qt->it", v_braket, me_batch)
+                me_pes += jnp.einsum("qi,qt->it", v_braket, me_pes_batch)
+        
+                einsum_r = jnp.einsum("qi,aqt->ait", v_braket, dme_r_batch)
+                dme_r = einsum_r if dme_r is None else dme_r + einsum_r
+        
+                einsum_l = jnp.einsum("qi,aqt->ait", v_braket, dme_l_batch)
+                dme_l = einsum_l if dme_l is None else dme_l + einsum_l
+        
+                einsum_2 = jnp.einsum("qi,abqt->abit", v_braket, d2me_batch)
+                d2me = einsum_2 if d2me is None else d2me + einsum_2
+        
                 end_time = time.time()
-                print('iteration time:',np.round(end_time-start_time,2))
+                print('iteration time compute objects to store:', np.round(end_time - start_time, 2))
 
-            # Concatenate batches
-            me = jnp.concatenate(me_accum, axis=0)  # or stack, depending on shape
-            me_pes = jnp.concatenate(me_pes_accum, axis=0)  # or stack, depending on shape
-            dme_r_full = {k: jnp.concatenate(v, axis=0) for k, v in dme_r_accum.items()}
-            dme_l_full = {k: jnp.concatenate(v, axis=0) for k, v in dme_l_accum.items()}
-            d2me_full = {k: jnp.concatenate(v, axis=0) for k, v in d2me_accum.items()}
         
-            # Eigenbasis transform
-            nstates = len(v_ind)
-            self.bas_ind = np.arange(nstates)
-
-            self.me_pes = jnp.einsum(
-                "pi,pqt,qj->ijt", v, me_pes.reshape(nbas, nbas, -1), v
-            ).reshape(nstates * nstates, -1)
-            
-            self.me = jnp.einsum(
-                "pi,pqt,qj->ijt", v, me.reshape(nbas, nbas, -1), v
-            ).reshape(nstates * nstates, -1)
-        
-            self.dme_r = {
-                key: jnp.einsum(
-                    "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
-                ).reshape(nstates * nstates, -1)
-                for key, val in dme_r_full.items()
-            }
-            self.dme_l = {
-                key: jnp.einsum(
-                    "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
-                ).reshape(nstates * nstates, -1)
-                for key, val in dme_l_full.items()
-            }
-            self.d2me = {
-                key: jnp.einsum(
-                    "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
-                ).reshape(nstates * nstates, -1)
-                for key, val in d2me_full.items()
-            }
+            # Store transformed eigenbasis
+            self.bas_ind = jnp.arange(nstates)
+            start_time = time.time()
+            self.me = me
+            self.me_pes = me_pes
+            self.dme_r = {k: dme_r[k] for k in coo_ind}
+            self.dme_l = {k: dme_l[k] for k in coo_ind}
+            self.d2me = {(k,j): d2me[k,j] for k in coo_ind for j in coo_ind}
+            end_time = time.time()
+            print('Storing time:',np.round(end_time-start_time,2))
             
 def compute_gme(bas_list, m_ind_flat, coupl_ind, coo_ind, me0, Gmat_coefs):
     gme = 0
@@ -435,6 +410,13 @@ def compute_gme(bas_list, m_ind_flat, coupl_ind, coo_ind, me0, Gmat_coefs):
             gme += (val_prod * me0) @ Gmat_coefs[:, icoo, jcoo]
     return gme
 
+def _me_pes_precomputed(me_pes_list, bas_m_ind):
+    me = None
+    for me_array, ind in zip(me_pes_list, bas_m_ind):
+        val = me_array[ind]  # Now safe, no object access
+        me = val if me is None else me * val
+    return me
+
 def _me_pes(coupl_bas, bas_m_ind):
     me = None
     for bas, ind in zip(coupl_bas, bas_m_ind):
@@ -450,7 +432,7 @@ def _me(coupl_bas, bas_m_ind):
     return me
 
 def _dme_l(coupl_bas, bas_m_ind, coo_ind):
-    dme = {}
+    dme = []#{}
     for icoo in coo_ind:
         val_prod = None
         for bas, ind in zip(coupl_bas, bas_m_ind):
@@ -459,11 +441,12 @@ def _dme_l(coupl_bas, bas_m_ind, coo_ind):
             else:
                 val = bas.me[ind]
             val_prod = val if val_prod is None else val_prod * val
-        dme[icoo] = val_prod
-    return dme
+        #dme[icoo] = val_prod
+        dme.append(val_prod)
+    return jnp.array(dme)
 
 def _dme_r(coupl_bas, bas_m_ind, coo_ind):
-    dme = {}
+    dme = [] #{} 
     for icoo in coo_ind:
         val_prod = None
         for bas, ind in zip(coupl_bas, bas_m_ind):
@@ -472,12 +455,14 @@ def _dme_r(coupl_bas, bas_m_ind, coo_ind):
             else:
                 val = bas.me[ind]
             val_prod = val if val_prod is None else val_prod * val
-        dme[icoo] = val_prod
-    return dme
+        #dme[icoo] = val_prod
+        dme.append(val_prod)
+    return jnp.array(dme)
 
 
 def _d2me(coupl_bas, bas_m_ind, coo_ind):
-    d2me = {}
+    #d2me = {}
+    d2me = []
     for icoo in coo_ind:
         for jcoo in coo_ind:
             #for_bas = []
@@ -494,8 +479,9 @@ def _d2me(coupl_bas, bas_m_ind, coo_ind):
                 else:
                     val = bas.me[ind]
                 val_prod = val if val_prod is None else val_prod * val
-            d2me[(icoo, jcoo)] = val_prod
-    return d2me
+            #d2me[(icoo, jcoo)] = val_prod
+            d2me.append(val_prod)
+    return jnp.array(d2me).reshape((len(coo_ind),len(coo_ind),*jnp.shape(d2me[0])))
 
 def generate_prod_ind(
     indices: List[List[int]],
