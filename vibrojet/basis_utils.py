@@ -5,8 +5,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from numpy.polynomial.hermite import hermder, hermgauss, hermval
-from scipy.special import factorial
 from scipy.sparse import csr_array
+from scipy.special import factorial
 
 jax.config.update("jax_enable_x64", True)
 
@@ -110,6 +110,7 @@ class ContrBasis:
         emax: float = 1e8,
         thresh: float = 1e-8,
         store_me: bool = True,
+        no_batches: int = 10,
     ):
         if (pseudo_terms is None) != (pseudo_coefs is None):
             raise ValueError(
@@ -168,50 +169,6 @@ class ContrBasis:
                 pseudo_terms, bas_list, coupl_ind, self.coo_ind, "pseudo"
             )
 
-        # Compute matrix elements of potential and kinetic
-        # energy operator expansions corresponding
-        # to the unique (reduced) expansion set
-
-        # poten_me = _poten_me(
-        #     [bas_list[i] for i in coupl_ind],
-        #     [m_ind_flat[i] for i in coupl_ind],
-        #     [poten_terms_map[i] for i in coupl_ind],
-        # )
-
-        # gmat_me = _gmat_me(
-        #     [bas_list[i] for i in coupl_ind],
-        #     [m_ind_flat[i] for i in coupl_ind],
-        #     [gmat_terms_map[i] for i in coupl_ind],
-        # )
-
-        # dme_r = _dme_r(
-        #     [bas_list[i] for i in coupl_ind],
-        #     [m_ind_flat[i] for i in coupl_ind],
-        #     [gmat_terms_map[i] for i in coupl_ind],
-        #     coo_ind,
-        # )
-
-        # dme_l = _dme_l(
-        #     [bas_list[i] for i in coupl_ind],
-        #     [m_ind_flat[i] for i in coupl_ind],
-        #     [gmat_terms_map[i] for i in coupl_ind],
-        #     coo_ind,
-        # )
-
-        # d2me = _d2me(
-        #     [bas_list[i] for i in coupl_ind],
-        #     [m_ind_flat[i] for i in coupl_ind],
-        #     [gmat_terms_map[i] for i in coupl_ind],
-        #     coo_ind,
-        # )
-
-        # if pseudo_terms is not None:
-        #     pseudo_me = _pseudo_me(
-        #         [bas_list[i] for i in coupl_ind],
-        #         [m_ind_flat[i] for i in coupl_ind],
-        #         [pseudo_terms_map[i] for i in coupl_ind],
-        #     )
-
         # Compute matrix elements <0,0,..| q^t |0,0,..> between products
         # of zero-order basis functions, for basis sets that are not coupled.
         # Matrix elements are computed for full set of expansion terms
@@ -262,16 +219,21 @@ class ContrBasis:
         # Define and solve reduced-mode eigenvalue problem
         # for basis sets that are involved in contraction
 
+        hme = np.zeros(nbas * nbas, dtype=np.float64)
+
         # potential matrix elements
         c = poten_coefs * poten_me0
         c = np.array([c[ind].sum() for ind in poten_coefs_map])
         nz_ind = np.where(np.abs(c) > thresh)[0]
-        me = _poten_me(
-            [bas_list[i] for i in coupl_ind],
-            [m_ind_flat[i] for i in coupl_ind],
-            [poten_terms_map[i][nz_ind] for i in coupl_ind],
-        )
-        hme = me @ c[nz_ind]
+        nz_ind_batched = np.array_split(nz_ind, no_batches)
+        c_batched = np.array_split(c[nz_ind], no_batches)
+        for ibatch, (nz_ind, c) in enumerate(zip(nz_ind_batched, c_batched)):
+            me = _poten_me(
+                [bas_list[i] for i in coupl_ind],
+                [m_ind_flat[i] for i in coupl_ind],
+                [poten_terms_map[i][nz_ind] for i in coupl_ind],
+            )
+            hme += me @ c
 
         # keo matrix elements
         for icoo in self.coo_ind:
@@ -279,29 +241,35 @@ class ContrBasis:
                 c = gmat_coefs[:, icoo, jcoo] * gmat_me0
                 c = np.array([c[ind].sum() for ind in gmat_coefs_map])
                 nz_ind = np.where(np.abs(c) > thresh)[0]
-                me = _d2me_i_j(
-                    [bas_list[i] for i in coupl_ind],
-                    [m_ind_flat[i] for i in coupl_ind],
-                    [gmat_terms_map[i][nz_ind] for i in coupl_ind],
-                    icoo,
-                    jcoo,
-                )
-                hme -= 0.5 * me @ c[nz_ind]
+                nz_ind_batched = np.array_split(nz_ind, no_batches)
+                c_batched = np.array_split(c[nz_ind], no_batches)
+                for ibatch, (nz_ind, c) in enumerate(zip(nz_ind_batched, c_batched)):
+                    me = _d2me_i_j(
+                        [bas_list[i] for i in coupl_ind],
+                        [m_ind_flat[i] for i in coupl_ind],
+                        [gmat_terms_map[i][nz_ind] for i in coupl_ind],
+                        icoo,
+                        jcoo,
+                    )
+                    hme -= 0.5 * me @ c
 
         # pseudopotential matrix elements
         if pseudo_coefs is not None:
             c = pseudo_coefs * pseudo_me0
             c = np.array([c[ind].sum() for ind in pseudo_coefs_map])
             nz_ind = np.where(np.abs(c) > thresh)[0]
-            me = _pseudo_me(
-                [bas_list[i] for i in coupl_ind],
-                [m_ind_flat[i] for i in coupl_ind],
-                [pseudo_terms_map[i][nz_ind] for i in coupl_ind],
-            )
-            hme += me @ c[nz_ind]
+            nz_ind_batched = np.array_split(nz_ind, no_batches)
+            c_batched = np.array_split(c[nz_ind], no_batches)
+            for ibatch, (nz_ind, c) in enumerate(zip(nz_ind_batched, c_batched)):
+                me = _pseudo_me(
+                    [bas_list[i] for i in coupl_ind],
+                    [m_ind_flat[i] for i in coupl_ind],
+                    [pseudo_terms_map[i][nz_ind] for i in coupl_ind],
+                )
+                hme += me @ c
 
         e, v = jnp.linalg.eigh(hme.reshape(nbas, nbas))
-        v_ind = jnp.where(e <= emax)[0]
+        v_ind = jnp.where(e - e[0] <= emax)[0]
         v = v[:, v_ind]
         self.enr = e[v_ind]
         nstates = len(v_ind)
@@ -348,13 +316,6 @@ class ContrBasis:
                 for icoo in self.coo_ind
             }
 
-            # self.dme_r = {
-            #     key: jnp.einsum(
-            #         "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
-            #     ).reshape(nstates * nstates, -1)
-            #     for key, val in dme_r.items()
-            # }
-
             self.dme_l = {
                 icoo: jnp.einsum(
                     "pqt,pi,qj->ijt",
@@ -369,13 +330,6 @@ class ContrBasis:
                 ).reshape(nstates * nstates, -1)
                 for icoo in self.coo_ind
             }
-
-            # self.dme_l = {
-            #     key: jnp.einsum(
-            #         "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
-            #     ).reshape(nstates * nstates, -1)
-            #     for key, val in dme_l.items()
-            # }
 
             self.d2me = {
                 (icoo, jcoo): jnp.einsum(
@@ -394,13 +348,6 @@ class ContrBasis:
                 for jcoo in self.coo_ind
             }
 
-            # self.d2me = {
-            #     key: jnp.einsum(
-            #         "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
-            #     ).reshape(nstates * nstates, -1)
-            #     for key, val in d2me.items()
-            # }
-
             if pseudo_coefs is not None:
                 self.pseudo_me = jnp.einsum(
                     "pqt,pi,qj->ijt",
@@ -412,11 +359,6 @@ class ContrBasis:
                     v,
                     v,
                 ).reshape(nstates * nstates, -1)
-
-            # if pseudo_coefs is not None:
-            #     self.pseudo_me = jnp.einsum(
-            #         "pi,pqt,qj->ijt", v, pseudo_me.reshape(nbas, nbas, -1), v
-            #     ).reshape(nstates * nstates, -1)
 
 
 def _poten_me(coupl_bas, bas_m_ind, term_ind):
