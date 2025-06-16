@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.polynomial.hermite import hermder, hermgauss, hermval
 from scipy.special import factorial
+from scipy.sparse import csr_array
 
 jax.config.update("jax_enable_x64", True)
 
@@ -38,6 +39,7 @@ class HermiteBasis:
         gmat_terms: np.ndarray,
         poten_terms: np.ndarray,
         pseudo_terms: np.ndarray | None = None,
+        thresh: float = 1e-8,
     ):
         self.bas_ind = np.arange(nbas)
         self.coo_ind = (icoo,)
@@ -58,7 +60,7 @@ class HermiteBasis:
         else:
             poten_terms = np.unique(poten_terms)
         poten_pow = poten_coords(q)[:, None] ** poten_terms[None, :]
-        poten_me = jnp.einsum("gi,gt,gj,g->ijt", psi, poten_pow, psi, w)
+        poten_me = np.einsum("gi,gt,gj,g->ijt", psi, poten_pow, psi, w)
         self.poten_me = poten_me.reshape(-1, len(poten_terms))
         self.poten_terms = poten_terms[:, np.newaxis]
 
@@ -106,6 +108,8 @@ class ContrBasis:
         pseudo_terms: np.ndarray | None = None,
         pseudo_coefs: np.ndarray | None = None,
         emax: float = 1e8,
+        thresh: float = 1e-8,
+        store_me: bool = True,
     ):
         if (pseudo_terms is None) != (pseudo_coefs is None):
             raise ValueError(
@@ -168,45 +172,45 @@ class ContrBasis:
         # energy operator expansions corresponding
         # to the unique (reduced) expansion set
 
-        poten_me = _poten_me(
-            [bas_list[i] for i in coupl_ind],
-            [m_ind_flat[i] for i in coupl_ind],
-            [poten_terms_map[i] for i in coupl_ind],
-        )
+        # poten_me = _poten_me(
+        #     [bas_list[i] for i in coupl_ind],
+        #     [m_ind_flat[i] for i in coupl_ind],
+        #     [poten_terms_map[i] for i in coupl_ind],
+        # )
 
-        gmat_me = _gmat_me(
-            [bas_list[i] for i in coupl_ind],
-            [m_ind_flat[i] for i in coupl_ind],
-            [gmat_terms_map[i] for i in coupl_ind],
-        )
+        # gmat_me = _gmat_me(
+        #     [bas_list[i] for i in coupl_ind],
+        #     [m_ind_flat[i] for i in coupl_ind],
+        #     [gmat_terms_map[i] for i in coupl_ind],
+        # )
 
-        dme_r = _dme_r(
-            [bas_list[i] for i in coupl_ind],
-            [m_ind_flat[i] for i in coupl_ind],
-            [gmat_terms_map[i] for i in coupl_ind],
-            coo_ind,
-        )
+        # dme_r = _dme_r(
+        #     [bas_list[i] for i in coupl_ind],
+        #     [m_ind_flat[i] for i in coupl_ind],
+        #     [gmat_terms_map[i] for i in coupl_ind],
+        #     coo_ind,
+        # )
 
-        dme_l = _dme_l(
-            [bas_list[i] for i in coupl_ind],
-            [m_ind_flat[i] for i in coupl_ind],
-            [gmat_terms_map[i] for i in coupl_ind],
-            coo_ind,
-        )
+        # dme_l = _dme_l(
+        #     [bas_list[i] for i in coupl_ind],
+        #     [m_ind_flat[i] for i in coupl_ind],
+        #     [gmat_terms_map[i] for i in coupl_ind],
+        #     coo_ind,
+        # )
 
-        d2me = _d2me(
-            [bas_list[i] for i in coupl_ind],
-            [m_ind_flat[i] for i in coupl_ind],
-            [gmat_terms_map[i] for i in coupl_ind],
-            coo_ind,
-        )
+        # d2me = _d2me(
+        #     [bas_list[i] for i in coupl_ind],
+        #     [m_ind_flat[i] for i in coupl_ind],
+        #     [gmat_terms_map[i] for i in coupl_ind],
+        #     coo_ind,
+        # )
 
-        if pseudo_terms is not None:
-            pseudo_me = _pseudo_me(
-                [bas_list[i] for i in coupl_ind],
-                [m_ind_flat[i] for i in coupl_ind],
-                [pseudo_terms_map[i] for i in coupl_ind],
-            )
+        # if pseudo_terms is not None:
+        #     pseudo_me = _pseudo_me(
+        #         [bas_list[i] for i in coupl_ind],
+        #         [m_ind_flat[i] for i in coupl_ind],
+        #         [pseudo_terms_map[i] for i in coupl_ind],
+        #     )
 
         # Compute matrix elements <0,0,..| q^t |0,0,..> between products
         # of zero-order basis functions, for basis sets that are not coupled.
@@ -261,20 +265,40 @@ class ContrBasis:
         # potential matrix elements
         c = poten_coefs * poten_me0
         c = np.array([c[ind].sum() for ind in poten_coefs_map])
-        hme = poten_me @ c
+        nz_ind = np.where(np.abs(c) > thresh)[0]
+        me = _poten_me(
+            [bas_list[i] for i in coupl_ind],
+            [m_ind_flat[i] for i in coupl_ind],
+            [poten_terms_map[i][nz_ind] for i in coupl_ind],
+        )
+        hme = me @ c[nz_ind]
 
         # keo matrix elements
         for icoo in self.coo_ind:
             for jcoo in self.coo_ind:
                 c = gmat_coefs[:, icoo, jcoo] * gmat_me0
                 c = np.array([c[ind].sum() for ind in gmat_coefs_map])
-                hme -= 0.5 * d2me[(icoo, jcoo)] @ c
+                nz_ind = np.where(np.abs(c) > thresh)[0]
+                me = _d2me_i_j(
+                    [bas_list[i] for i in coupl_ind],
+                    [m_ind_flat[i] for i in coupl_ind],
+                    [gmat_terms_map[i][nz_ind] for i in coupl_ind],
+                    icoo,
+                    jcoo,
+                )
+                hme -= 0.5 * me @ c[nz_ind]
 
         # pseudopotential matrix elements
         if pseudo_coefs is not None:
             c = pseudo_coefs * pseudo_me0
             c = np.array([c[ind].sum() for ind in pseudo_coefs_map])
-            hme += pseudo_me @ c
+            nz_ind = np.where(np.abs(c) > thresh)[0]
+            me = _pseudo_me(
+                [bas_list[i] for i in coupl_ind],
+                [m_ind_flat[i] for i in coupl_ind],
+                [pseudo_terms_map[i][nz_ind] for i in coupl_ind],
+            )
+            hme += me @ c[nz_ind]
 
         e, v = jnp.linalg.eigh(hme.reshape(nbas, nbas))
         v_ind = jnp.where(e <= emax)[0]
@@ -283,47 +307,123 @@ class ContrBasis:
         nstates = len(v_ind)
         self.bas_ind = np.arange(nstates)
 
-        # transform matrix elements to eigenbasis
+        # compute matrix elements in eigenbasis
 
-        self.poten_me = jnp.einsum(
-            "pi,pqt,qj->ijt", v, poten_me.reshape(nbas, nbas, -1), v
-        ).reshape(nstates * nstates, -1)
+        if store_me:
 
-        self.gmat_me = jnp.einsum(
-            "pi,pqt,qj->ijt", v, gmat_me.reshape(nbas, nbas, -1), v
-        ).reshape(nstates * nstates, -1)
-
-        self.dme_r = {
-            key: jnp.einsum(
-                "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
+            self.poten_me = jnp.einsum(
+                "pqt,pi,qj->ijt",
+                _poten_me(
+                    [bas_list[i] for i in coupl_ind],
+                    [m_ind_flat[i] for i in coupl_ind],
+                    [poten_terms_map[i] for i in coupl_ind],
+                ).reshape(nbas, nbas, -1),
+                v,
+                v,
             ).reshape(nstates * nstates, -1)
-            for key, val in dme_r.items()
-        }
 
-        self.dme_l = {
-            key: jnp.einsum(
-                "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
+            self.gmat_me = jnp.einsum(
+                "pqt,pi,qj->ijt",
+                _gmat_me(
+                    [bas_list[i] for i in coupl_ind],
+                    [m_ind_flat[i] for i in coupl_ind],
+                    [poten_terms_map[i] for i in coupl_ind],
+                ).reshape(nbas, nbas, -1),
+                v,
+                v,
             ).reshape(nstates * nstates, -1)
-            for key, val in dme_l.items()
-        }
 
-        self.d2me = {
-            key: jnp.einsum(
-                "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
-            ).reshape(nstates * nstates, -1)
-            for key, val in d2me.items()
-        }
+            self.dme_r = {
+                icoo: jnp.einsum(
+                    "pqt,pi,qj->ijt",
+                    _dme_r_i(
+                        [bas_list[i] for i in coupl_ind],
+                        [m_ind_flat[i] for i in coupl_ind],
+                        [poten_terms_map[i] for i in coupl_ind],
+                        icoo,
+                    ).reshape(nbas, nbas, -1),
+                    v,
+                    v,
+                ).reshape(nstates * nstates, -1)
+                for icoo in self.coo_ind
+            }
 
-        if pseudo_coefs is not None:
-            self.pseudo_me = jnp.einsum(
-                "pi,pqt,qj->ijt", v, pseudo_me.reshape(nbas, nbas, -1), v
-            ).reshape(nstates * nstates, -1)
+            # self.dme_r = {
+            #     key: jnp.einsum(
+            #         "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
+            #     ).reshape(nstates * nstates, -1)
+            #     for key, val in dme_r.items()
+            # }
+
+            self.dme_l = {
+                icoo: jnp.einsum(
+                    "pqt,pi,qj->ijt",
+                    _dme_l_i(
+                        [bas_list[i] for i in coupl_ind],
+                        [m_ind_flat[i] for i in coupl_ind],
+                        [poten_terms_map[i] for i in coupl_ind],
+                        icoo,
+                    ).reshape(nbas, nbas, -1),
+                    v,
+                    v,
+                ).reshape(nstates * nstates, -1)
+                for icoo in self.coo_ind
+            }
+
+            # self.dme_l = {
+            #     key: jnp.einsum(
+            #         "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
+            #     ).reshape(nstates * nstates, -1)
+            #     for key, val in dme_l.items()
+            # }
+
+            self.d2me = {
+                (icoo, jcoo): jnp.einsum(
+                    "pqt,pi,qj->ijt",
+                    _d2me_i_j(
+                        [bas_list[i] for i in coupl_ind],
+                        [m_ind_flat[i] for i in coupl_ind],
+                        [poten_terms_map[i] for i in coupl_ind],
+                        icoo,
+                        jcoo,
+                    ).reshape(nbas, nbas, -1),
+                    v,
+                    v,
+                ).reshape(nstates * nstates, -1)
+                for icoo in self.coo_ind
+                for jcoo in self.coo_ind
+            }
+
+            # self.d2me = {
+            #     key: jnp.einsum(
+            #         "pi,pqt,qj->ijt", v, val.reshape(nbas, nbas, -1), v
+            #     ).reshape(nstates * nstates, -1)
+            #     for key, val in d2me.items()
+            # }
+
+            if pseudo_coefs is not None:
+                self.pseudo_me = jnp.einsum(
+                    "pqt,pi,qj->ijt",
+                    _pseudo_me(
+                        [bas_list[i] for i in coupl_ind],
+                        [m_ind_flat[i] for i in coupl_ind],
+                        [poten_terms_map[i] for i in coupl_ind],
+                    ).reshape(nbas, nbas, -1),
+                    v,
+                    v,
+                ).reshape(nstates * nstates, -1)
+
+            # if pseudo_coefs is not None:
+            #     self.pseudo_me = jnp.einsum(
+            #         "pi,pqt,qj->ijt", v, pseudo_me.reshape(nbas, nbas, -1), v
+            #     ).reshape(nstates * nstates, -1)
 
 
 def _poten_me(coupl_bas, bas_m_ind, term_ind):
     val_prod = 1
     for bas, b_ind, t_ind in zip(coupl_bas, bas_m_ind, term_ind):
         val = bas.poten_me[np.ix_(b_ind, t_ind)]
+        # val = bas.poten_me[b_ind, :][:, t_ind]
         val_prod *= val
     return val_prod
 
@@ -336,10 +436,21 @@ def _gmat_me(coupl_bas, bas_m_ind, term_ind):
     return val_prod
 
 
-def _pseudo_me(coupl_bas, bas_m_ind):
+def _pseudo_me(coupl_bas, bas_m_ind, term_ind):
     val_prod = 1
-    for bas, ind in zip(coupl_bas, bas_m_ind):
-        val = bas.pseudo_me[ind]
+    for bas, b_ind, t_ind in zip(coupl_bas, bas_m_ind, term_ind):
+        val = bas.pseudo_me[np.ix_(b_ind, t_ind)]
+        val_prod *= val
+    return val_prod
+
+
+def _dme_l_i(coupl_bas, bas_m_ind, term_ind, icoo):
+    val_prod = 1
+    for bas, b_ind, t_ind in zip(coupl_bas, bas_m_ind, term_ind):
+        if icoo in bas.coo_ind:
+            val = bas.dme_l[icoo][np.ix_(b_ind, t_ind)]
+        else:
+            val = bas.gmat_me[np.ix_(b_ind, t_ind)]
         val_prod *= val
     return val_prod
 
@@ -358,6 +469,17 @@ def _dme_l(coupl_bas, bas_m_ind, term_ind, coo_ind):
     return dme
 
 
+def _dme_r_i(coupl_bas, bas_m_ind, term_ind, icoo):
+    val_prod = 1
+    for bas, b_ind, t_ind in zip(coupl_bas, bas_m_ind, term_ind):
+        if icoo in bas.coo_ind:
+            val = bas.dme_r[icoo][np.ix_(b_ind, t_ind)]
+        else:
+            val = bas.gmat_me[np.ix_(b_ind, t_ind)]
+        val_prod *= val
+    return val_prod
+
+
 def _dme_r(coupl_bas, bas_m_ind, term_ind, coo_ind):
     dme = {}
     for icoo in coo_ind:
@@ -370,6 +492,26 @@ def _dme_r(coupl_bas, bas_m_ind, term_ind, coo_ind):
             val_prod *= val
         dme[icoo] = val_prod
     return dme
+
+
+def _d2me_i_j(coupl_bas, bas_m_ind, term_ind, icoo, jcoo):
+    val_prod = 1
+    for bas, b_ind, t_ind in zip(coupl_bas, bas_m_ind, term_ind):
+        if (icoo, jcoo) in bas.d2me:
+            val = bas.d2me[(icoo, jcoo)][np.ix_(b_ind, t_ind)]
+        elif icoo in bas.coo_ind and jcoo in bas.coo_ind:
+            val = (
+                bas.dme_l[icoo][np.ix_(b_ind, t_ind)]
+                * bas.dme_r[jcoo][np.ix_(b_ind, t_ind)]
+            )
+        elif icoo in bas.coo_ind:
+            val = bas.dme_l[icoo][np.ix_(b_ind, t_ind)]
+        elif jcoo in bas.coo_ind:
+            val = bas.dme_r[jcoo][np.ix_(b_ind, t_ind)]
+        else:
+            val = bas.gmat_me[np.ix_(b_ind, t_ind)]
+        val_prod *= val
+    return val_prod
 
 
 def _d2me(coupl_bas, bas_m_ind, term_ind, coo_ind):
