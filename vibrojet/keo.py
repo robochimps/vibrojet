@@ -59,90 +59,6 @@ def com(masses: np.ndarray):
     return wrapper
 
 
-def eckart(q_ref: np.ndarray, masses: np.ndarray):
-    """Wrapper function for `internal_to_cartesian` that computes the Cartesian coordinates
-    of atoms from given internal coordinates and then rotates them to the Eckart frame.
-
-    Args:
-        q_ref (np.ndarray): An array containing reference values of internal coordinates
-            for defining the Eckart frame.
-        masses (np.ndarray): An array containing the masses of the atoms. The order of atoms
-            in `masses` must match the order in the output of `internal_to_cartesian`.
-
-    Returns:
-        A function that first computes the Cartesian coordinates using `internal_to_cartesian`
-        and then rotates them to the Eckart frame.
-    """
-
-    def _wrapper(internal_to_cartesian):
-        @functools.wraps(internal_to_cartesian)
-        def wrapper_eckart(*args, **kwargs):
-            xyz = internal_to_cartesian(*args, **kwargs)
-            assert len(xyz) == len(masses), (
-                "The number of elements in 'masses' must match the leading dimension of the array "
-                "returned by the 'internal_to_cartesian' function"
-            )
-            masses_ = jnp.asarray(masses)
-            com = masses_ @ xyz / jnp.sum(masses_)
-            xyz -= com
-            xyz_ref = internal_to_cartesian(jnp.asarray(q_ref), **kwargs)
-            com_ref = masses_ @ xyz_ref / jnp.sum(masses_)
-            xyz_ref -= com_ref
-
-            xyz_ma = xyz_ref - xyz
-            xyz_pa = xyz_ref + xyz
-            x_ma, y_ma, z_ma = xyz_ma.T
-            x_pa, y_pa, z_pa = xyz_pa.T
-
-            c11 = jnp.sum(masses_ * (x_ma**2 + y_ma**2 + z_ma**2))
-            c12 = jnp.sum(masses_ * (y_pa * z_ma - y_ma * z_pa))
-            c13 = jnp.sum(masses_ * (x_ma * z_pa - x_pa * z_ma))
-            c14 = jnp.sum(masses_ * (x_pa * y_ma - x_ma * y_pa))
-            c22 = jnp.sum(masses_ * (x_ma**2 + y_pa**2 + z_pa**2))
-            c23 = jnp.sum(masses_ * (x_ma * y_ma - x_pa * y_pa))
-            c24 = jnp.sum(masses_ * (x_ma * z_ma - x_pa * z_pa))
-            c33 = jnp.sum(masses_ * (x_pa**2 + y_ma**2 + z_pa**2))
-            c34 = jnp.sum(masses_ * (y_ma * z_ma - y_pa * z_pa))
-            c44 = jnp.sum(masses_ * (x_pa**2 + y_pa**2 + z_ma**2))
-
-            c = jnp.array(
-                [
-                    [c11, c12, c13, c14],
-                    [c12, c22, c23, c24],
-                    [c13, c23, c33, c34],
-                    [c14, c24, c34, c44],
-                ]
-            )
-
-            e, v = eigh(c)
-            quar = v[:, 0]
-
-            u = jnp.array(
-                [
-                    [
-                        quar[0] ** 2 + quar[1] ** 2 - quar[2] ** 2 - quar[3] ** 2,
-                        2 * (quar[1] * quar[2] + quar[0] * quar[3]),
-                        2 * (quar[1] * quar[3] - quar[0] * quar[2]),
-                    ],
-                    [
-                        2 * (quar[1] * quar[2] - quar[0] * quar[3]),
-                        quar[0] ** 2 - quar[1] ** 2 + quar[2] ** 2 - quar[3] ** 2,
-                        2 * (quar[2] * quar[3] + quar[0] * quar[1]),
-                    ],
-                    [
-                        2 * (quar[1] * quar[3] + quar[0] * quar[2]),
-                        2 * (quar[2] * quar[3] - quar[0] * quar[1]),
-                        quar[0] ** 2 - quar[1] ** 2 - quar[2] ** 2 + quar[3] ** 2,
-                    ],
-                ]
-            )
-            return xyz @ u.T
-
-        return wrapper_eckart
-
-    return _wrapper
-
-
 @functools.partial(jax.jit, static_argnums=2)
 def gmat(q, masses, internal_to_cartesian):
     # xyz_g = jax.jacfwd(internal_to_cartesian)(jnp.asarray(q))
@@ -371,15 +287,24 @@ def zmatrix_coordinates(
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
-def dGmat(q, masses, internal_to_cartesian):
+def jac_Gmat(q, masses, internal_to_cartesian):
     return jax.jacfwd(Gmat)(q, masses, internal_to_cartesian)
 
 
-batch_dGmat = jax.jit(jax.vmap(dGmat, in_axes=0))
+@functools.partial(jax.jit, static_argnums=(2,))
+def jac_Gmat_vib(q, masses, internal_to_cartesian):
+    nq = len(q)
+    return jax.jacfwd(lambda *arg: Gmat(*arg)[:nq, :nq])(
+        q, masses, internal_to_cartesian
+    )
 
 
 @jax.jit
 def det(a):
+    # NOTE: defines determinant up to a sign
+    #   because we lose access to permutation
+    #   by calling jax.scipy.linalg.lu(a, permute_l=True)
+    #   in jet_prim.lu_impl
     l, u = lu(a)
     ud = [u[i, i] for i in range(len(u))]
     return reduce(operator.mul, ud, 1)
@@ -391,23 +316,64 @@ def det(a):
 #     return reduce(operator.mul, e, 1)
 
 
+@jax.jit
+def log_abs_det(a):
+    l, u = lu(a)
+    return jnp.sum(jnp.array([jnp.log(jnp.abs(u[i, i])) for i in range(len(u))]))
+
+
 @functools.partial(jax.jit, static_argnums=(2,))
-def Detgmat(q, masses, internal_to_cartesian):
+def det_gmat(q, masses, internal_to_cartesian):
     nq = len(q)
     return det(gmat(q, masses, internal_to_cartesian)[: nq + 3, : nq + 3])
     # return jnp.linalg.det(gmat(q, masses, internal_to_cartesian)[: nq + 3, : nq + 3])
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
-def dDetgmat(q, masses, internal_to_cartesian):
-    return jax.jacrev(Detgmat)(q, masses, internal_to_cartesian)
-    # return jax.jacfwd(Detgmat)(q, masses, internal_to_cartesian)
+def log_abs_det_gmat(q, masses, internal_to_cartesian):
+    nq = len(q)
+    return log_abs_det(gmat(q, masses, internal_to_cartesian)[: nq + 3, : nq + 3])
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
-def hDetgmat(q, masses, internal_to_cartesian):
-    return jax.jacfwd(jax.jacrev(Detgmat))(q, masses, internal_to_cartesian)
-    # return jax.jacfwd(dDetgmat)(q, masses, internal_to_cartesian)
+def jac_det_gmat(q, masses, internal_to_cartesian):
+    return jax.jacrev(det_gmat)(q, masses, internal_to_cartesian)
+    # return jax.jacfwd(det_gmat)(q, masses, internal_to_cartesian)
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def jac_log_abs_det_gmat(q, masses, internal_to_cartesian):
+    return jax.jacrev(log_abs_det_gmat)(q, masses, internal_to_cartesian)
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def hess_det_gmat(q, masses, internal_to_cartesian):
+    return jax.jacfwd(jax.jacrev(det_gmat))(q, masses, internal_to_cartesian)
+    # return jax.jacfwd(det_gmat)(q, masses, internal_to_cartesian)
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def hess_log_abs_det_gmat(q, masses, internal_to_cartesian):
+    return jax.jacfwd(jax.jacrev(log_abs_det_gmat))(q, masses, internal_to_cartesian)
+
+
+@functools.partial(jax.jit, static_argnums=(2,))
+def pseudo_old(
+    q: np.ndarray,
+    masses: np.ndarray,
+    internal_to_cartesian: Callable[[jnp.ndarray], jnp.ndarray],
+):
+    nq = len(q)
+    G = Gmat(q, masses, internal_to_cartesian)[:nq, :nq]
+    dG = jac_Gmat(q, masses, internal_to_cartesian)[:nq, :nq, :]
+    dG = jnp.transpose(dG, (0, 2, 1))
+    det = det_gmat(q, masses, internal_to_cartesian)
+    det2 = det * det
+    ddet = jac_det_gmat(q, masses, internal_to_cartesian)
+    hdet = hess_det_gmat(q, masses, internal_to_cartesian)
+    pseudo1 = (jnp.dot(ddet, jnp.dot(G, ddet))) / det2
+    pseudo2 = (jnp.sum(dG * ddet.T) + jnp.sum(G * hdet)) / det
+    return (-3 * pseudo1 + 4 * pseudo2) / 32.0
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
@@ -416,17 +382,21 @@ def pseudo(
     masses: np.ndarray,
     internal_to_cartesian: Callable[[jnp.ndarray], jnp.ndarray],
 ):
+    """Pseudopotential implementation according to Eq. (21)
+    in Edit Mátyus, Gábor Czakó, and Attila G. Császár,
+    J. Chem. Phys. 130, 134112 (2009)
+    http://dx.doi.org/10.1063/1.3076742
+    """
     nq = len(q)
     G = Gmat(q, masses, internal_to_cartesian)[:nq, :nq]
-    dG = dGmat(q, masses, internal_to_cartesian)[:nq, :nq, :]
-    dG = jnp.transpose(dG, (0, 2, 1))
-    det = Detgmat(q, masses, internal_to_cartesian)
-    det2 = det * det
-    ddet = dDetgmat(q, masses, internal_to_cartesian)
-    hdet = hDetgmat(q, masses, internal_to_cartesian)
-    pseudo1 = (jnp.dot(ddet, jnp.dot(G, ddet))) / det2
-    pseudo2 = (jnp.sum(dG * ddet.T) + jnp.sum(G * hdet)) / det
-    return (-3 * pseudo1 + 4 * pseudo2) / 32.0
+    dG = jac_Gmat_vib(q, masses, internal_to_cartesian)
+    k = jnp.arange(nq)
+    dG = dG[k, :, k]
+    dlogdet = jac_log_abs_det_gmat(q, masses, internal_to_cartesian)
+    hlogdet = hess_log_abs_det_gmat(q, masses, internal_to_cartesian)
+    pseudo1 = dlogdet @ G @ dlogdet
+    pseudo2 = jnp.sum(dG @ dlogdet) + jnp.sum(G * hlogdet)
+    return (pseudo1 + 4 * pseudo2) / 32.0
 
 
 batch_pseudo = jax.jit(jax.vmap(pseudo, in_axes=(0, None, None)), static_argnums=2)
