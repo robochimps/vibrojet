@@ -27,11 +27,14 @@ $$
 where $\lambda,\mu=\{r_1,r_2,\alpha,\phi,\theta,\chi,X,Y,Z\}$ correspond to the $3N-6$ vibrational, three rotational, and three translational coordinate indices.
 ```py
 import itertools
+
 import jax
 import jax.numpy as jnp
+
 from vibrojet.eckart import eckart
-from vibrojet.keo import Gmat, batch_Gmat, batch_pseudo, pseudo
+from vibrojet.keo import Gmat
 from vibrojet.taylor import deriv_list
+
 jax.config.update("jax_enable_x64", True)
 
 # Masses of O, H, H atoms
@@ -45,6 +48,7 @@ q0 = [r1, r2, alpha]
 #   input: array of three valence coordinates
 #   output: array of shape (number of atoms, 3)
 #           containing Cartesian coordinates of atoms
+
 
 @eckart(q0, masses)
 def valence_to_cartesian(q):
