@@ -358,7 +358,7 @@ def hess_log_abs_det_gmat(q, masses, internal_to_cartesian):
 
 
 @functools.partial(jax.jit, static_argnums=(2,))
-def pseudo_old(
+def pseudo2(
     q: np.ndarray,
     masses: np.ndarray,
     internal_to_cartesian: Callable[[jnp.ndarray], jnp.ndarray],
@@ -372,7 +372,7 @@ def pseudo_old(
     ddet = jac_det_gmat(q, masses, internal_to_cartesian)
     hdet = hess_det_gmat(q, masses, internal_to_cartesian)
     pseudo1 = (jnp.dot(ddet, jnp.dot(G, ddet))) / det2
-    #pseudo2 = (jnp.sum(dG * ddet.T) + jnp.sum(G * hdet)) / det
+    # pseudo2 = (jnp.sum(dG * ddet.T) + jnp.sum(G * hdet)) / det
     pseudo2 = (jnp.sum(jnp.diag(jnp.dot(dG, ddet))) + jnp.sum(G * hdet)) / det
     return (-3 * pseudo1 + 4 * pseudo2) / 32.0
 
