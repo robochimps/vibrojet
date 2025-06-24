@@ -515,22 +515,6 @@ def expansion_subspace(
     return unique_terms, terms_map, unique_terms_map
 
 
-def _generate_prod_ind(
-    indices: list[list[int]],
-    select: Callable[[list[int]], bool] = lambda _: True,
-    batch_size: int = None,
-):
-
-    no_elem = np.array([len(elem) for elem in indices])
-    tot_size = np.prod(no_elem)
-    list_ = indices[0]
-    for i in range(1, len(indices)):
-        list_ = list(product(list_, indices[i]))
-        list_ = [tuple(a) + (b,) if isinstance(a, tuple) else (a, b) for a, b in list_]
-        list_ = [elem for elem in list_ if select(elem)]
-    yield np.array(list_), np.array(list_).T  # indices_out, #multi_ind
-
-
 def generate_prod_ind(
     indices: list[list[int]],
     select: Callable[[list[int]], bool] = lambda _: True,
