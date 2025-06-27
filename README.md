@@ -90,7 +90,7 @@ More examples and user contributions for various molecules can be found in the [
 Citation
 ---
 If you use this code in your research, please cite:
-> A. Yachmenev, E. Vogt, A. F. Corral, Y. Saleh, "Taylor-mode automatic differentiation for constructing molecular rovibrational Hamiltonian operators" (2025) submitted
+> A. Yachmenev, E. Vogt, A. F. Corral, Y. Saleh, "Taylor-mode automatic differentiation for constructing molecular rovibrational Hamiltonian operators" (2025) [arXiv:2506.20129v2](https://doi.org/10.48550/arXiv.2506.20129)
 
 ```bibtex
 @article{Yachmenev2025,
@@ -99,10 +99,9 @@ If you use this code in your research, please cite:
   year    = {2025},
   journal = {Submitted},
   archiveprefix = {arXiv},
-  arxivid = {},
-  eprint = {},
+  eprint = {2506.20129},
   primaryclass = {physics},
-  arxiv = {},
+  url = {https://doi.org/10.48550/arXiv.2506.20129},
 }
 ```
 
