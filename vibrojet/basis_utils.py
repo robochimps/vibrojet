@@ -295,7 +295,7 @@ class ContrBasis:
                 _gmat_me(
                     [bas_list[i] for i in coupl_ind],
                     [m_ind_flat[i] for i in coupl_ind],
-                    [poten_terms_map[i] for i in coupl_ind],
+                    [gmat_terms_map[i] for i in coupl_ind],
                 ).reshape(nbas, nbas, -1),
                 v,
                 v,
@@ -307,7 +307,7 @@ class ContrBasis:
                     _dme_r_i(
                         [bas_list[i] for i in coupl_ind],
                         [m_ind_flat[i] for i in coupl_ind],
-                        [poten_terms_map[i] for i in coupl_ind],
+                        [gmat_terms_map[i] for i in coupl_ind],
                         icoo,
                     ).reshape(nbas, nbas, -1),
                     v,
@@ -322,7 +322,7 @@ class ContrBasis:
                     _dme_l_i(
                         [bas_list[i] for i in coupl_ind],
                         [m_ind_flat[i] for i in coupl_ind],
-                        [poten_terms_map[i] for i in coupl_ind],
+                        [gmat_terms_map[i] for i in coupl_ind],
                         icoo,
                     ).reshape(nbas, nbas, -1),
                     v,
@@ -337,7 +337,7 @@ class ContrBasis:
                     _d2me_i_j(
                         [bas_list[i] for i in coupl_ind],
                         [m_ind_flat[i] for i in coupl_ind],
-                        [poten_terms_map[i] for i in coupl_ind],
+                        [gmat_terms_map[i] for i in coupl_ind],
                         icoo,
                         jcoo,
                     ).reshape(nbas, nbas, -1),
@@ -354,7 +354,7 @@ class ContrBasis:
                     _pseudo_me(
                         [bas_list[i] for i in coupl_ind],
                         [m_ind_flat[i] for i in coupl_ind],
-                        [poten_terms_map[i] for i in coupl_ind],
+                        [pseudo_terms_map[i] for i in coupl_ind],
                     ).reshape(nbas, nbas, -1),
                     v,
                     v,
