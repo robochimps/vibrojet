@@ -90,14 +90,18 @@ More examples and user contributions for various molecules can be found in the [
 Citation
 ---
 If you use this code in your research, please cite:
-> A. Yachmenev, E. Vogt, A. F. Corral, Y. Saleh, "Taylor-mode automatic differentiation for constructing molecular rovibrational Hamiltonian operators" (2025) [arXiv:2506.20129v2](https://doi.org/10.48550/arXiv.2506.20129)
+> A. Yachmenev, E. Vogt, A. F. Corral, Y. Saleh, "Taylor-mode automatic differentiation for constructing molecular rovibrational Hamiltonian operators", *J. Chem. Phys.* **163**, 072501 (2025) [10.1063/5.0287347](https://doi.org/10.48550/arXiv.2506.20129), [arXiv:2506.20129](https://doi.org/10.48550/arXiv.2506.20129)
 
 ```bibtex
 @article{Yachmenev2025,
   author  = {A. Yachmenev, E. Vogt, A. F. Corral, Y. Saleh},
   title   = {Taylor-mode automatic differentiation for constructing molecular rovibrational Hamiltonian operators},
   year    = {2025},
-  journal = {Submitted},
+  journal = {J. Chem. Phys.},
+  volume = {163},
+  pages = {072501},
+  url = {https://doi.org/10.1063/5.0287347},
+  DOI = {10.1063/5.0287347},
   archiveprefix = {arXiv},
   eprint = {2506.20129},
   primaryclass = {physics},
